@@ -871,7 +871,7 @@
 
   // A remark about a whole file has no line to lose, so it is never left behind by one.
   const isOutdated = (note, keys) =>
-    note.side !== "file" && !keys.has(`${note.path}|${note.side}|${note.endLine || note.line}`);
+    note.side !== "file" && !keys.has(`${note.path}|${note.side}|${placed(note)}`);
 
   function mine() {
     return notes.sent.filter((note) => belongs(note) && note.path !== "(review)");
@@ -1091,9 +1091,35 @@
   const send1 = (note) => sendAll([note], "");
 
   function notesAt(path, line, side) {
-    const hit = (note) => belongs(note) && note.path === path && note.side === side && (note.endLine || note.line) === line;
+    const hit = (note) => belongs(note) && note.path === path && note.side === side && placed(note) === line;
     return [...notes.sent.filter(hit), ...notes.drafts.filter(hit).map((draft) => ({ ...draft, pending: true }))];
   }
+
+  // Where a comment now belongs. A diff that changes under a comment leaves its line number pointing at whatever took
+  // that place, so the text the comment was written against is what places it: found once, that line is where it goes;
+  // found nowhere, the line number stands and the comment reads as having been left behind.
+  function codeAt(path, line, side) {
+    const file = view().files.find((entry) => entry.path === path);
+    if (!file) return "";
+    const row = file.lines.find(
+      (entry) => entry[0] !== "h" && (entry[0] === "d" ? "old" : "new") === side && (entry[0] === "d" ? entry[1] : entry[2]) === line,
+    );
+    return row ? row[3] : "";
+  }
+
+  function placed(note) {
+    const wanted = note.endLine || note.line;
+    if (!note.anchor) return wanted;
+    const file = view().files.find((entry) => entry.path === note.path);
+    if (!file) return wanted;
+    const rows = file.lines.filter((row) => row[0] !== "h" && (row[0] === "d" ? "old" : "new") === note.side);
+    if (rows.some((row) => (row[0] === "d" ? row[1] : row[2]) === wanted && row[3] === note.anchor)) return wanted;
+    const same = rows.filter((row) => row[3] === note.anchor);
+    if (same.length !== 1) return wanted;
+    return same[0][0] === "d" ? same[0][1] : same[0][2];
+  }
+
+  const moved = (note) => placed(note) !== (note.endLine || note.line);
 
   const GITHUB_MARK = {
     pending: "waiting for GitHub",
@@ -1226,6 +1252,13 @@
       const mark = document.createElement("span");
       mark.className = "mark outdated";
       mark.textContent = "rewritten after posting";
+      head.append(mark);
+    }
+    if (!note.pending && !note.outdated && moved(note)) {
+      const mark = document.createElement("span");
+      mark.className = "mark outdated";
+      mark.textContent = `moved from L${note.endLine || note.line}`;
+      mark.title = "The diff changed under this comment; it now sits on the line it was written against";
       head.append(mark);
     }
     if (note.outdated) {
@@ -1577,6 +1610,7 @@
       line,
       endLine,
       side,
+      anchor: codeAt(path, endLine || line, side),
       text: field.value.trim(),
       at: stamp(),
     });

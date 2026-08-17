@@ -89,7 +89,15 @@ def watch(args):
     if ask("/data") is None:
         sys.exit("nothing is serving; start with 'desk.py serve' first")
     sent = ask("/comments") or []
-    since = args.since if args.since is not None else max((row["seq"] for row in sent), default=0)
+    # Anything still open is unaddressed, whenever it arrived, so watching starts before it rather than after: a cursor
+    # set to the end swallows whatever was written while the last batch was being worked on.
+    waiting = [row["seq"] for row in sent if row.get("state") == "open"]
+    if args.since is not None:
+        since = args.since
+    elif waiting:
+        since = min(waiting) - 1
+    else:
+        since = max((row["seq"] for row in sent), default=0)
     print(f"watching for comments past seq {since}", flush=True)
     deadline = time.monotonic() + args.timeout if args.timeout else None
     while deadline is None or time.monotonic() < deadline:
