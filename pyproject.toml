@@ -1,6 +1,18 @@
 [tool.ruff]
 line-length = 120
 
+[tool.ruff.lint]
+# Pinned rather than inherited, so a newer ruff does not change what passes.
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PL", "DTZ", "BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# A status code or a row count read straight from the assertion is clearer than a name for it.
+"tests/*" = ["PLR2004"]
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false
+known-first-party = ["conftest", "desk", "gen_diff_data", "serve_diff"]
+
 [tool.ruff.format]
 skip-magic-trailing-comma = true
 

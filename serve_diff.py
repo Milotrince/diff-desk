@@ -26,7 +26,7 @@ PAGE = HOME / "diff_desk.html"
 TEMPLATE = HERE / "diff_desk_template.html"
 DATA = HOME / "diff_data.json"
 NOTES = HOME / "comments.jsonl"
-PORT = int(os.environ.get("DIFF_DESK_PORT", 8787))
+PORT = int(os.environ.get("DIFF_DESK_PORT", "8787"))
 
 
 def read_notes():
@@ -127,7 +127,7 @@ class Handler(BaseHTTPRequestHandler):
         print(f"SCAN {root} {base} {refs or '(every branch ahead)'}", flush=True)
         try:
             payload = gen_diff_data.collect(root, base, refs)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - whatever went wrong belongs on the page, not in a traceback
             print(f"SCAN FAILED {error}", flush=True)
             self._json({"ok": False, "error": f"{type(error).__name__}: {error}"})
             return
@@ -205,6 +205,7 @@ class Handler(BaseHTTPRequestHandler):
             capture_output=True,
             text=True,
             timeout=90,
+            check=False,
         )
         if done.returncode == 0:
             url = json.loads(done.stdout or "{}").get("html_url", "")

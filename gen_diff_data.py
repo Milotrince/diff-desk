@@ -1,6 +1,5 @@
 """Collect a git range as reviewable data: whole branch and per commit, for any repository and any base."""
 
-import datetime
 import hashlib
 import json
 import os
@@ -8,6 +7,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 
 
 def home():
@@ -18,7 +18,8 @@ def home():
 
 
 def run(root, *args):
-    return subprocess.run(["git", *args], capture_output=True, text=True, cwd=root).stdout
+    """Ask git something. A command that fails answers with nothing, which every caller reads as absence."""
+    return subprocess.run(["git", *args], capture_output=True, text=True, cwd=root, check=False).stdout
 
 
 def canonical_repo(root):
@@ -31,7 +32,11 @@ def canonical_repo(root):
         if not match:
             continue
         slug = subprocess.run(
-            ["gh", "api", f"repos/{match.group(1)}", "--jq", ".full_name"], capture_output=True, text=True, timeout=40
+            ["gh", "api", f"repos/{match.group(1)}", "--jq", ".full_name"],
+            capture_output=True,
+            text=True,
+            timeout=40,
+            check=False,
         ).stdout.strip()
         return slug or match.group(1)
     return ""
@@ -40,7 +45,7 @@ def canonical_repo(root):
 def render_page(template, payload):
     """The page as served: the payload inlined, stamped with the moment it was built so a stale tab is obvious."""
     body = json.dumps(payload, separators=(",", ":")).replace("</script", "<\\/script")
-    stamp = datetime.datetime.now().strftime("built %H:%M:%S")
+    stamp = time.strftime("built %H:%M:%S")
     return template.replace("__DIFF_DATA__", body).replace("__BUILD__", stamp)
 
 
@@ -117,6 +122,7 @@ def pull_requests(root, upstream):
         text=True,
         cwd=root,
         timeout=60,
+        check=False,
     ).stdout
     try:
         rows = json.loads(out or "[]")

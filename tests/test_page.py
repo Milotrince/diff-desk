@@ -25,11 +25,11 @@ def browser(play, request):
     kind = getattr(play, request.param)
     try:
         yield kind.launch()
-    except Exception:
+    except playwright.Error:
         # A machine may carry the system browser rather than the bundled build.
         try:
             yield kind.launch(channel="chrome" if request.param == "chromium" else request.param)
-        except Exception as error:
+        except playwright.Error as error:
             pytest.skip(f"{request.param} is not installed: {error}")
 
 
@@ -151,11 +151,20 @@ def test_a_gap_can_be_filled_and_leaves_no_bare_delimiter(page):
     gap.click()
     page.wait_for_timeout(600)
     assert card.locator("tr.c").count() > before
-    # Lines brought in are the file's own, numbered on both sides.
-    numbers = page.evaluate("""() => [...document.querySelectorAll('section.file')]
-      .find((card) => card.textContent.includes('sample.py'))
-      .querySelectorAll('tr.c')[0].querySelectorAll('td.ln')""")
-    assert numbers == 2 or numbers is None or True
+    # A line brought in is the file's own, numbered identically on both sides, which is what makes it commentable.
+    brought = page.evaluate("""() => {
+      const cards = [...document.querySelectorAll('section.file')];
+      const card = cards.find((node) => node.textContent.includes('sample.py'));
+      const row = card.querySelector('tr.c[data-line]');
+      return {
+        side: row.dataset.side,
+        numbers: [...row.querySelectorAll('td.ln')].map((cell) => cell.textContent),
+        text: row.querySelector('td.code').textContent,
+      };
+    }""")
+    assert brought["side"] == "new"
+    assert brought["numbers"] == [brought["numbers"][0]] * 2
+    assert brought["text"] == f"line {brought['numbers'][0]}"
     bare = page.evaluate(
         """() => [...document.querySelectorAll('tr.h')].filter((row) => !row.querySelector('button')).length"""
     )
@@ -171,7 +180,8 @@ def test_expanding_every_gap_reaches_the_whole_file(page):
         buttons.first.click()
         page.wait_for_timeout(400)
     shown = page.evaluate("""() => {
-      const card = [...document.querySelectorAll('section.file')].find((node) => node.textContent.includes('sample.py'));
+      const cards = [...document.querySelectorAll('section.file')];
+      const card = cards.find((node) => node.textContent.includes('sample.py'));
       const seen = new Set();
       for (const row of card.querySelectorAll('tr[data-side="new"]')) seen.add(Number(row.dataset.line));
       return {lines: seen.size, first: Math.min(...seen), last: Math.max(...seen)};
@@ -196,7 +206,11 @@ def test_the_pinned_file_head_clears_the_page_header(page, width):
         .filter((box) => box.top >= -1 && box.top < 260)
         .sort((one, other) => one.top - other.top)[0];
       const under = document.elementFromPoint(Math.round(header.width / 2), Math.round(header.bottom + 4));
-      return {bottom: header.bottom, top: pinned ? pinned.top : null, head: Boolean(under && under.closest('.filehead'))};
+      return {
+        bottom: header.bottom,
+        top: pinned ? pinned.top : null,
+        head: Boolean(under && under.closest('.filehead')),
+      };
     }""")
     assert look["top"] is not None
     # A head hidden behind the page header leaves a hunk delimiter standing where the file name should be.

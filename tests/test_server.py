@@ -6,6 +6,7 @@ import urllib.parse
 import urllib.request
 
 import pytest
+
 from conftest import FILE_LINES, SECOND_EDIT
 
 
@@ -50,7 +51,8 @@ def test_a_slice_of_the_file_fills_a_gap(desk):
 
 
 def test_a_slice_beyond_the_file_is_clamped(desk):
-    where = f"/lines?dir={urllib.parse.quote(str(desk.repo))}&rev=feature&path=sample.py&from={FILE_LINES}&to={FILE_LINES + 40}"
+    beyond = FILE_LINES + 40
+    where = f"/lines?dir={urllib.parse.quote(str(desk.repo))}&rev=feature&path=sample.py&from={FILE_LINES}&to={beyond}"
     answer = desk.get(where)
     assert answer["lines"] == [f"line {FILE_LINES}"]
     assert answer["to"] == FILE_LINES
