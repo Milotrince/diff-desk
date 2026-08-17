@@ -82,13 +82,21 @@ def fetch_pull(root, upstream, number):
         timeout=60,
         check=False,
     )
+    read = None
     if seen.returncode == 0:
-        request = json.loads(seen.stdout)
+        try:
+            read = json.loads(seen.stdout)
+        except json.JSONDecodeError:
+            # An answer that is not one is no answer: treated as a failed read rather than crashing the collection.
+            read = None
+    if read is not None:
+        request = read
     elif held:
         print(f"#{number} could not be read from {upstream}; showing the head fetched earlier", flush=True)
         request = fetched
     else:
-        raise RuntimeError(f"#{number} could not be read from {upstream}: {' '.join(seen.stderr.split())[:200]}")
+        told = " ".join((seen.stderr or seen.stdout or "no answer").split())[:200]
+        raise RuntimeError(f"#{number} could not be read from {upstream}: {told}")
     brought = subprocess.run(
         ["git", "fetch", "--quiet", f"https://github.com/{upstream}.git", f"+refs/pull/{number}/head:{local}"],
         capture_output=True,

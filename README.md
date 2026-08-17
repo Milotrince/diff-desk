@@ -131,6 +131,10 @@ State lives in `~/.claude/diff-desk/` (override with `DIFF_DESK_HOME`); the port
 every review the desk has served, and each comment records which pull request it was sent to, so posting, resolving or
 syncing one review never reaches another's comments.
 
+A review is identified by its pull request, not by the ref it is read from. The same work opened from its branch, from
+the head fetched by number, or from the number typed in is one review: its comments and its reviewed ticks follow it
+across all three.
+
 ## Development
 
     pip install pytest playwright && playwright install chromium firefox webkit
