@@ -441,7 +441,13 @@ def test_a_comment_resolved_here_does_not_claim_the_pull_request_agrees(page, de
         "/comments",
         {
             "comments": [
-                {"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": "on the pr"}
+                {
+                    "branch": branch,
+                    "path": "sample.py",
+                    "line": FIRST_EDIT,
+                    "side": "new",
+                    "text": "a remark of its own",
+                }
             ],
             "github": True,
         },
@@ -449,18 +455,20 @@ def test_a_comment_resolved_here_does_not_claim_the_pull_request_agrees(page, de
     seq = made["seqs"][0]
     desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/3#review-2"}))
     desk.post("/publish", {"repo": "someone/somewhere", "pr": 3, "seq": [seq]})
+    # Whatever the page sweeps in the background cannot reach GitHub, so the pull request is left unasked.
+    desk.github_answers(code=1, err="dial tcp: lookup api.github.com: no such host")
     desk.post("/resolve", {"seq": [seq], "who": "session"})
     page.reload(wait_until="load")
     page.wait_for_selector("section.file")
 
     page.locator("#logopen").click()
     page.wait_for_selector("#log[data-open='true']")
-    row = page.locator("#logrows .logrow").filter(has_text="on the pr").first
+    row = page.locator("#logrows .logrow").filter(has_text="a remark of its own").first
     marks = row.locator(".mark").all_inner_texts()
     # Closed here and posted there, but the thread on the pull request is not resolved - and the page must say so.
     assert "resolved here" in marks
     assert "on the PR" in marks
-    assert "not resolved there yet" in marks
+    assert [mark for mark in marks if mark.startswith("not resolved there")]
     assert "resolved there" not in marks
     page.locator("#logclose").click()
 

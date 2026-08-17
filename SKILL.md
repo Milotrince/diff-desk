@@ -42,7 +42,10 @@ the thread, and close what is done - the page shows both without a reload:
 
 Reply when the answer needs discussing, resolve when it is settled - a resolved thread keeps its remark and every
 reply, and the reviewer can reopen it. Resolving a comment that was posted to a pull request also resolves its thread
-there, and says "not resolved there yet" until GitHub confirms it. `desk.py comments [--all]` lists what is outstanding. Start a fresh `watch`
+there, and says "not resolved there yet" until GitHub confirms it.
+
+`desk.py sync` carries replies both ways with the pull request and takes its word on what is resolved. Run it when the
+reviewer mentions having answered on GitHub, or before working through comments, so the two copies agree. `desk.py comments [--all]` lists what is outstanding. Start a fresh `watch`
 after each batch; it resumes from the current end unless given `--since N`.
 
 ## Behaviour to know

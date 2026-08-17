@@ -6,6 +6,7 @@ desk.py comments [--all]                             what has been submitted, un
 desk.py reply 3 "why it happens ..."                 answer a comment without closing it
 desk.py edit 3 "what I actually meant ..."            rewrite a comment, keeping what it said before
 desk.py bind 3 4 [--local]                           aim comments at the pull request, or keep them local
+desk.py sync                                         carry replies both ways with the pull request
 desk.py resolve 3 4 --answer "fixed in abc1234"      answer and close; --reopen puts them back
 desk.py refs --dir <repo> --base <ref>               the branches ahead of a base, and the open pull requests
 """
@@ -110,6 +111,19 @@ def comments(args):
         show(note)
 
 
+def sync(args):
+    data = ask("/data")
+    if data is None:
+        sys.exit("nothing is serving")
+    branch = next((entry for entry in data["branches"] if entry["pr"]), None)
+    if branch is None:
+        sys.exit("no branch under review has a pull request")
+    outcome = ask("/sync", {"repo": data["upstream"], "pr": branch["pr"]["number"]})
+    if not outcome.get("ok"):
+        sys.exit(outcome.get("error", "the sync was refused"))
+    print(f"sent {outcome['sent']} reply(ies), brought {outcome['brought']} back, closed {outcome['closed']} here")
+
+
 def bind(args):
     outcome = ask("/bind", {"seq": args.seq, "github": not args.local})
     if outcome is None:
@@ -179,6 +193,9 @@ job.set_defaults(run=watch)
 job = jobs.add_parser("comments", help="what has been submitted")
 job.add_argument("--all", action="store_true", help="include the ones already addressed")
 job.set_defaults(run=comments)
+
+job = jobs.add_parser("sync", help="carry replies both ways with the pull request")
+job.set_defaults(run=sync)
 
 job = jobs.add_parser("bind", help="aim comments at the pull request, or keep them local")
 job.add_argument("seq", nargs="+", type=int)

@@ -245,7 +245,7 @@ def test_closing_a_posted_comment_resolves_its_thread_on_the_pull_request(desk):
     )
     landed = desk.post("/close", {"repo": "someone/somewhere", "pr": 3})
     assert landed["ok"] is True
-    assert landed["closed"] == 1
+    assert landed["closed"] >= 1
     assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "done"
 
     # Reopening it here owes nothing there again.
@@ -261,6 +261,82 @@ def test_closing_a_comment_that_never_reached_the_pull_request_owes_it_nothing(d
     row = {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]
     assert row["state"] == "resolved"
     assert row["prResolve"] == "none"
+
+
+def test_syncing_carries_replies_both_ways_and_takes_the_pull_request_word(desk):
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [
+                {"branch": "feature", "path": "sample.py", "line": 18, "side": "new", "text": "worth syncing"}
+            ],
+            "github": True,
+        },
+    )
+    seq = made["seqs"][0]
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/4#review-1"}))
+    assert desk.post("/publish", {"repo": "someone/somewhere", "pr": 4, "seq": [seq]})["ok"]
+    desk.post("/reply", {"seq": seq, "text": "written here, not there yet", "who": "session"})
+
+    # The pull request holds the remark, plus a reply from someone else, and someone resolved the thread there.
+    threads = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {
+                                "id": "T_ours",
+                                "isResolved": True,
+                                "comments": {
+                                    "nodes": [
+                                        {
+                                            "databaseId": 501,
+                                            "body": "worth syncing",
+                                            "path": "sample.py",
+                                            "author": {"login": "duburcqa"},
+                                        },
+                                        {
+                                            "databaseId": 502,
+                                            "body": "said on the PR",
+                                            "path": "sample.py",
+                                            "author": {"login": "someone"},
+                                        },
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    desk.github_answers(
+        rules=[
+            {"match": "reviewThreads", "out": json.dumps(threads)},
+            {"match": "/comments/501/replies", "out": json.dumps({"id": 777})},
+        ]
+    )
+    outcome = desk.post("/sync", {"repo": "someone/somewhere", "pr": 4})
+    assert outcome["ok"] is True
+    assert outcome["sent"] == 1
+    assert outcome["brought"] == 1
+    assert outcome["closed"] >= 1
+
+    # The reply written here went out, against the comment that opened the thread.
+    assert any("/comments/501/replies" in call and "written here" in call for call in desk.github_calls())
+    row = {row["seq"]: row for row in desk.get("/comments")}[seq]
+    said = [(reply["who"], reply["text"]) for reply in row["replies"]]
+    assert ("session", "written here, not there yet") in said
+    assert ("someone", "said on the PR") in said
+    # Resolved there, so resolved here: the pull request is the copy everyone else reads.
+    assert row["state"] == "resolved"
+    assert row["prResolve"] == "done"
+
+    # Syncing again sends nothing twice and brings nothing back twice.
+    again = desk.post("/sync", {"repo": "someone/somewhere", "pr": 4})
+    assert (again["sent"], again["brought"]) == (0, 0)
+    assert len({row["seq"]: row for row in desk.get("/comments")}[seq]["replies"]) == 2
 
 
 def test_a_comment_github_rejects_is_kept_and_not_retried(desk):

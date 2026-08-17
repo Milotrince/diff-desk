@@ -12,6 +12,9 @@ import sys
 
 asked = json.loads(pathlib.Path(os.environ["FAKE_GH_SCRIPT"]).read_text())
 asking = " ".join(sys.argv[1:])
+if os.environ.get("FAKE_GH_LOG"):
+    with pathlib.Path(os.environ["FAKE_GH_LOG"]).open("a") as told:
+        told.write(asking + "\n")
 wanted = next((rule for rule in asked.get("rules", []) if rule["match"] in asking), asked)
 # Whatever is being piped in is left unread: only a posted review is given anything, and the calls that resolve a
 # repository inherit a standard input that never ends, which reading would wait on for good.

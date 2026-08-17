@@ -79,6 +79,11 @@ class Desk:
         reply = {"code": code, "out": out, "err": err, "rules": list(rules)}
         (self.home / "fake_gh.json").write_text(json.dumps(reply))
 
+    def github_calls(self):
+        """Everything the stand-in for gh was asked, in order, so a test can prove a call was made."""
+        told = self.home / "fake_gh.log"
+        return told.read_text().splitlines() if told.exists() else []
+
     def get(self, route):
         with urllib.request.urlopen(f"{self.url}{route}", timeout=30) as answer:
             return json.loads(answer.read() or b"null")
@@ -109,6 +114,7 @@ def desk(repo, tmp_path_factory):
             # GitHub is answered for by a stand-in, so posting is exercised without a network or a login.
             "DIFF_DESK_GH": f"{sys.executable} {ROOT / 'tests' / 'fake_gh.py'}",
             "FAKE_GH_SCRIPT": str(home / "fake_gh.json"),
+            "FAKE_GH_LOG": str(home / "fake_gh.log"),
         },
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

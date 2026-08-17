@@ -409,6 +409,7 @@
   .thread .reply { padding-left: 10px; border-left: 1px solid var(--rule-strong); }
   .thread .reply.session .who { color: var(--accent); }
   .thread .reply.you .who { color: var(--add-ink); }
+  .thread .reply:not(.you):not(.session) .who { color: var(--stale); }
   .thread .mark { flex: none; font-family: var(--mono); font-size: 10.5px; padding: 0 6px; border-radius: 999px; }
   .thread .mark.pending { color: var(--stale); background: var(--stale-bg); }
   .thread .mark.failed { color: var(--del-ink); background: var(--del-bg); }
@@ -631,6 +632,7 @@
   <div class="actions">
     <button class="solid" id="logretry">Send what is waiting</button>
     <button class="ghost" id="logbind">Send the local ones too</button>
+    <button class="ghost" id="logsync">Sync with the PR</button>
     <span class="status" id="logresult"></span>
   </div>
 </div>
@@ -674,7 +676,7 @@
   const unfolded = new Set();
 
   const els = {};
-  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logclose", "logresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
+  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
     els[id] = document.getElementById(id);
   }
 
@@ -825,6 +827,7 @@
     const local = rows.filter((note) => note.github === "none");
     els.logretry.disabled = !owed.length;
     els.logbind.disabled = !local.length || !branch().pr;
+    els.logsync.disabled = !branch().pr;
     els.logbind.textContent = local.length
       ? `Send the ${local.length} local one${local.length === 1 ? "" : "s"} too`
       : "Send the local ones too";
@@ -916,6 +919,22 @@
       if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
     });
     return item;
+  }
+
+  async function syncThere(loud) {
+    // Replies both ways, and the pull request's word on what is resolved: it is the copy everyone else reads.
+    const request = branch().pr;
+    if (!request || !notes.live) return;
+    if (loud) els.logresult.textContent = `Syncing with PR #${request.number}...`;
+    const outcome = await post("sync", { repo: data.upstream, pr: request.number });
+    if (loud) {
+      els.logresult.textContent = outcome.ok
+        ? `Sent ${outcome.sent}, brought back ${outcome.brought}, closed ${outcome.closed} here`
+        : `Could not sync: ${outcome.error || "GitHub unreachable"}`;
+    }
+    await loadNotes();
+    drawLog();
+    render();
   }
 
   async function closeThere(loud) {
@@ -1203,7 +1222,8 @@
       said.className = `line reply ${answer.who}`;
       const from = document.createElement("span");
       from.className = "who";
-      from.textContent = answer.who === "you" ? `you ${answer.at}` : `claude ${answer.at}`;
+      const named = { you: "you", session: "claude" }[answer.who] || answer.who;
+      from.textContent = `${named} ${answer.at}`;
       const body = document.createElement("span");
       body.className = "said";
       written(body, answer.text);
@@ -2032,6 +2052,7 @@
     await retryOwed(true);
     await closeThere(true);
   });
+  els.logsync.addEventListener("click", () => syncThere(true));
   els.logbind.addEventListener("click", async () => {
     const local = mine().filter((note) => note.github === "none");
     if (!local.length || !branch().pr) return;
@@ -2088,6 +2109,7 @@
     if (navigator.onLine) {
       await retryOwed(false);
       await closeThere(false);
+      await syncThere(false);
     }
   }, 10000);
 

@@ -14,6 +14,7 @@ Endpoints, all on 127.0.0.1 so nothing is exposed off the machine:
   POST /publish               {repo, pr, summary, seq} - post those comments as one review; everything still owed
                               when seq is omitted, which is how a post that did not land is retried
   POST /close                 {repo, pr} - resolve, on the pull request, the threads of comments closed here
+  POST /sync                  {repo, pr} - carry replies both ways and take the pull request's word on what is resolved
 
 A comment is a thread: the reviewer's remark plus replies from either side, each stamped with who wrote it. A reply
 leaves the thread open; only resolving closes it, either side may do so, and a resolved thread keeps its text and every
@@ -72,7 +73,13 @@ THREADS = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100) { nodes { id isResolved comments(first: 5) { nodes { body path } } } }
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          comments(first: 50) { nodes { databaseId body path author { login } } }
+        }
+      }
     }
   }
 }
@@ -125,6 +132,64 @@ def resolve_thread(thread):
     if done.returncode == 0:
         return "done", ""
     return "failed", " ".join((done.stderr or done.stdout).split())[:300]
+
+
+def settle(row, landed, incoming, resolved):
+    """Write what a sync found onto one comment: replies that are on the pull request, replies brought back from it,
+    and its resolution - the pull request being the copy others read, what it says is resolved is resolved."""
+    for answer in row.get("replies", []):
+        if answer["text"] in landed:
+            answer["posted"] = True
+    if incoming:
+        row.setdefault("replies", []).extend(incoming)
+    if resolved:
+        row["state"] = "resolved"
+        row["prResolve"] = "done"
+
+
+def carry_replies(repo, number, row, said):
+    """Post the replies written here that the thread does not hold yet. Returns what it holds now, and how many went."""
+    spoken = {answer["body"] for answer in said}
+    landed, going = [], 0
+    for answer in row.get("replies", []):
+        if answer.get("posted") or answer["text"] in spoken:
+            landed.append(answer["text"])
+        elif reply_on_pull(repo, number, said[0]["databaseId"], answer["text"]):
+            landed.append(answer["text"])
+            going += 1
+    return landed, going
+
+
+def incoming(row, said):
+    """The replies the thread holds that this desk does not, as replies of its own."""
+    ours = {answer["text"] for answer in row.get("replies", [])} | {row["text"]}
+    return [
+        {"who": (answer.get("author") or {}).get("login") or "github", "text": answer["body"], "at": "on the PR"}
+        for answer in said[1:]
+        if answer["body"] not in ours
+    ]
+
+
+def reply_on_pull(repo, number, comment, text):
+    """Answer a pull request's review comment in its own thread. True when it went out."""
+    done = subprocess.run(
+        [
+            *gen_diff_data.github(),
+            "api",
+            "--method",
+            "POST",
+            f"repos/{repo}/pulls/{number}/comments/{comment}/replies",
+            "-f",
+            f"body={text}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    if done.returncode != 0:
+        print(f"REPLY REFUSED {' '.join((done.stderr or done.stdout).split())[:200]}", flush=True)
+    return done.returncode == 0
 
 
 def is_refusal(error):
@@ -239,6 +304,8 @@ class Handler(BaseHTTPRequestHandler):
             self._publish()
         elif path == "/close":
             self._close()
+        elif path == "/sync":
+            self._sync()
         else:
             self._send(404)
 
@@ -470,6 +537,50 @@ class Handler(BaseHTTPRequestHandler):
             still = len([row for row in fresh if row.get("prResolve") in ("pending", "failed")])
         print(f"CLOSED {closed} thread(s) on the pull request ({still} still owed)", flush=True)
         self._json({"ok": still == 0, "closed": closed, "owed": still})
+
+    def _sync(self):
+        """Bring this desk and the pull request to the same state.
+
+        Replies written here are posted to the thread they belong to; replies written there are brought back; and what
+        the pull request says is resolved is taken as the answer, since it is the copy others read. A thread is matched
+        by the body of the comment that opened it, which is the text this desk posted.
+        """
+        order = self._body()
+        threads, trouble = review_threads(order["repo"], order["pr"])
+        if threads is None:
+            print(f"SYNC FAILED {trouble}", flush=True)
+            self._json({"ok": False, "error": trouble})
+            return
+        with CHANGING:
+            rows = read_notes()
+        posted = {row["seq"]: row for row in rows if row.get("github") == "posted"}
+        theirs = {}
+        for thread in threads:
+            said = thread["comments"]["nodes"]
+            if said:
+                theirs[said[0]["body"]] = thread
+        sent, brought, closed = 0, 0, 0
+        pushed, pulled, resolved = {}, {}, set()
+        for seq, row in posted.items():
+            thread = theirs.get(row["text"])
+            if thread is None:
+                continue
+            said = thread["comments"]["nodes"]
+            landed, going = carry_replies(order["repo"], order["pr"], row, said)
+            pushed[seq] = landed
+            sent += going
+            brought_here = incoming(row, said)
+            if brought_here:
+                pulled[seq] = brought_here
+                brought += len(brought_here)
+            if thread["isResolved"] and row.get("state") != "resolved":
+                resolved.add(seq)
+                closed += 1
+        with changing() as fresh:
+            for row in fresh:
+                settle(row, pushed.get(row["seq"], []), pulled.get(row["seq"], []), row["seq"] in resolved)
+        print(f"SYNC sent {sent} reply(ies), brought {brought} back, closed {closed} here", flush=True)
+        self._json({"ok": True, "sent": sent, "brought": brought, "closed": closed})
 
     def log_message(self, *args):
         pass
