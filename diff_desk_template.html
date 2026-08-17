@@ -314,7 +314,6 @@
     text-align: right;
     color: var(--faint);
     background: var(--surface-sunk);
-    user-select: none;
     font-variant-numeric: tabular-nums;
     border-right: 1px solid var(--rule);
     cursor: pointer;
@@ -1436,9 +1435,14 @@
     const holder = document.createElement("div");
     holder.append(selection.getRangeAt(0).cloneContents());
     const cells = [...holder.querySelectorAll("td.code")];
-    if (cells.length < 2) return;
-    event.clipboardData.setData("text/plain", cells.map((cell) => cell.textContent).join("\n"));
-    event.preventDefault();
+    // One row is the common case - a single line lifted out - and it carries the numbers just as a span of rows does.
+    // Only a selection wholly inside one line's text brings no cell with it, and that one the browser already gets right.
+    if (!cells.length) return;
+    const code = cells.map((cell) => cell.textContent).join("\n");
+    event.clipboardData.setData("text/plain", code);
+    // Only take over the copy once the replacement is known to have been accepted: preventing the default after a
+    // refused write would put nothing on the clipboard at all, which is worse than the numbers coming along.
+    if (event.clipboardData.getData("text/plain") === code) event.preventDefault();
   });
 
   document.addEventListener("pointermove", (event) => {
@@ -2288,6 +2292,9 @@
       if (event.key === "Escape") event.target.blur();
       return;
     }
+    // A single letter is a shortcut of this page; the same letter held with a modifier belongs to the browser or the
+    // system - Meta+C is a copy, Meta+R a reload - and taking those was what stopped copying from working at all.
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "/") {
       event.preventDefault();
       els.q.focus();

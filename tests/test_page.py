@@ -576,6 +576,61 @@ def test_copying_a_selection_of_lines_yields_the_code_alone(page):
     page.evaluate("() => window.getSelection().removeAllRanges()")
 
 
+def test_copying_a_single_line_yields_the_code_alone(page):
+    page.evaluate("""() => {
+      window.__copied = null;
+      document.addEventListener('copy', (event) => {
+        window.__copied = event.clipboardData.getData('text/plain');
+      });
+    }""")
+    wanted = page.evaluate("""() => {
+      const row = document.querySelectorAll('section.file .body tr[data-line]')[2];
+      const range = document.createRange();
+      range.selectNode(row);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.execCommand('copy');
+      return row.querySelector('td.code').textContent;
+    }""")
+    # One line is the common case, and it carries the numbers just as a span of rows does.
+    assert page.evaluate("() => window.__copied") == wanted
+    page.evaluate("() => window.getSelection().removeAllRanges()")
+
+
+def test_a_letter_held_with_a_modifier_is_left_to_the_browser(page):
+    page.evaluate("""() => {
+      window.__taken = {};
+      document.addEventListener('keydown', (event) => {
+        window.__taken[event.key] = event.defaultPrevented;
+      });
+      const cell = document.querySelector('section.file .body tr[data-line] td.code');
+      const range = document.createRange();
+      range.setStart(cell.firstChild, 0);
+      range.setEnd(cell.firstChild, Math.min(10, cell.textContent.length));
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }""")
+    before = page.evaluate("() => String(window.getSelection())")
+    for combination in ("Meta+c", "Control+c", "Meta+r", "Meta+j", "Meta+k"):
+        page.keyboard.press(combination)
+    page.wait_for_timeout(150)
+    taken = page.evaluate("() => window.__taken")
+    # Copy, reload and the rest belong to the browser: taking them left the shortcut doing nothing in their place.
+    assert not any(taken.values()), taken
+    assert page.locator("tr[data-composer='true']").count() == 0
+    assert page.evaluate("() => String(window.getSelection())") == before
+
+    # The same letters alone are still this page's own.
+    page.keyboard.press("c")
+    page.wait_for_timeout(150)
+    assert page.evaluate("() => window.__taken.c") is True
+    page.keyboard.press("Escape")
+    for _ in range(page.locator("tr[data-composer='true']").count()):
+        page.locator("tr[data-composer='true'] button.ghost").first.click()
+
+
 def test_a_file_can_be_commented_on_as_a_whole(page, desk):
     card = sample(page)
     path = card.locator(".path").first.inner_text()
