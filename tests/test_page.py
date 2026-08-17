@@ -239,6 +239,21 @@ def test_the_file_list_follows_the_folders(page):
     assert shelf.get_attribute("data-open") == "true"
     inside = shelf.locator(".fileitem")
     assert inside.count() >= 1
+    # Whatever depth a file sits at, its bar and its count stand in one column: the row spans the panel, and only its
+    # indentation moves. A row sized to its own name would put every count wherever that name happened to end.
+    columns = page.evaluate("""() => {
+      const rows = [...document.querySelectorAll('#filelist .fileitem')];
+      const edge = (row, part, side) => Math.round(row.querySelector(part).getBoundingClientRect()[side]);
+      return {
+        depths: new Set(rows.map((row) => parseInt(getComputedStyle(row).paddingLeft))).size,
+        statRight: new Set(rows.map((row) => edge(row, '.stat', 'right'))).size,
+        barLeft: new Set(rows.map((row) => edge(row, '.bar', 'left'))).size,
+      };
+    }""")
+    assert columns["depths"] >= 2
+    assert columns["statRight"] == 1
+    assert columns["barLeft"] == 1
+
     # A folder folds away, and stays folded across reloads so a deep diff can be read a directory at a time.
     shelf.locator(".foldername").first.click()
     assert shelf.get_attribute("data-open") == "false"
