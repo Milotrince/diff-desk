@@ -134,6 +134,19 @@ def resolve_thread(thread):
     return "failed", " ".join((done.stderr or done.stdout).split())[:300]
 
 
+def owes_resolution(row):
+    """Whether the pull request still owes this comment a resolution.
+
+    Read from the state rather than from the moment it was closed: a comment closed here before it was ever posted, or
+    closed by an older version of this desk, owes one just the same. Only GitHub having confirmed it settles the matter.
+    """
+    if row.get("github") != "posted":
+        return False
+    if row.get("state") != "resolved":
+        return row.get("prResolve") in ("pending", "failed")
+    return row.get("prResolve") != "done"
+
+
 def settle(row, landed, incoming, resolved):
     """Write what a sync found onto one comment: replies that are on the pull request, replies brought back from it,
     and its resolution - the pull request being the copy others read, what it says is resolved is resolved."""
@@ -504,7 +517,7 @@ class Handler(BaseHTTPRequestHandler):
         order = self._body()
         with CHANGING:
             rows = read_notes()
-        owed = [row for row in rows if row.get("prResolve") in ("pending", "failed")]
+        owed = [row for row in rows if owes_resolution(row)]
         if not owed:
             self._json({"ok": True, "closed": 0, "owed": 0})
             return
@@ -534,16 +547,16 @@ class Handler(BaseHTTPRequestHandler):
                         row["prResolveError"] = trouble
                     else:
                         row.pop("prResolveError", None)
-            still = len([row for row in fresh if row.get("prResolve") in ("pending", "failed")])
+            still = len([row for row in fresh if owes_resolution(row)])
         print(f"CLOSED {closed} thread(s) on the pull request ({still} still owed)", flush=True)
         self._json({"ok": still == 0, "closed": closed, "owed": still})
 
     def _sync(self):
         """Bring this desk and the pull request to the same state.
 
-        Replies written here are posted to the thread they belong to; replies written there are brought back; and what
-        the pull request says is resolved is taken as the answer, since it is the copy others read. A thread is matched
-        by the body of the comment that opened it, which is the text this desk posted.
+        Replies go both ways, and so does resolution: a thread resolved there is closed here, since the pull request is
+        the copy everyone else reads, and one closed here is resolved there. A thread is matched by the body of the
+        comment that opened it, which is the text this desk posted.
         """
         order = self._body()
         threads, trouble = review_threads(order["repo"], order["pr"])
@@ -559,8 +572,8 @@ class Handler(BaseHTTPRequestHandler):
             said = thread["comments"]["nodes"]
             if said:
                 theirs[said[0]["body"]] = thread
-        sent, brought, closed = 0, 0, 0
-        pushed, pulled, resolved = {}, {}, set()
+        sent, brought, closed, away = 0, 0, 0, 0
+        pushed, pulled, resolved, there = {}, {}, set(), {}
         for seq, row in posted.items():
             thread = theirs.get(row["text"])
             if thread is None:
@@ -573,14 +586,25 @@ class Handler(BaseHTTPRequestHandler):
             if brought_here:
                 pulled[seq] = brought_here
                 brought += len(brought_here)
-            if thread["isResolved"] and row.get("state") != "resolved":
+            if thread["isResolved"]:
+                closed += row.get("state") != "resolved"
                 resolved.add(seq)
-                closed += 1
+            elif owes_resolution(row):
+                # Closed here and open there: the resolution owed is given now rather than waiting for another sweep.
+                there[seq] = resolve_thread(thread["id"])
+                away += there[seq][0] == "done"
         with changing() as fresh:
             for row in fresh:
                 settle(row, pushed.get(row["seq"], []), pulled.get(row["seq"], []), row["seq"] in resolved)
-        print(f"SYNC sent {sent} reply(ies), brought {brought} back, closed {closed} here", flush=True)
-        self._json({"ok": True, "sent": sent, "brought": brought, "closed": closed})
+                if row["seq"] in there:
+                    row["prResolve"], trouble = there[row["seq"]]
+                    if trouble:
+                        row["prResolveError"] = trouble
+                    else:
+                        row.pop("prResolveError", None)
+        told = f"sent {sent} reply(ies), brought {brought} back, closed {closed} here, resolved {away} there"
+        print(f"SYNC {told}", flush=True)
+        self._json({"ok": True, "sent": sent, "brought": brought, "closed": closed, "resolved": away})
 
     def log_message(self, *args):
         pass

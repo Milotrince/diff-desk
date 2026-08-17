@@ -205,8 +205,12 @@
   .fileitem:hover { background: var(--surface-sunk); }
   .fileitem[data-current="true"] { background: var(--accent-soft); }
   .fileitem[data-done="true"] .name { color: var(--faint); text-decoration: line-through; }
-  .fileitem .name { font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-  .fileitem .stat { display: flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  /* The indentation of the tree is padding on the row, so the row keeps the panel's width and the counts of every file
+     line up down one edge whatever depth they sit at. */
+  .fileitem { box-sizing: border-box; }
+  .fileitem .name { flex: 1; min-width: 0; font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .fileitem .stat { flex: none; margin-left: auto; display: flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .fileitem .stat .num { min-width: 3ch; text-align: right; }
   .tick { width: 12px; height: 12px; color: var(--add-ink); flex: none; opacity: 0; }
   .fileitem[data-done="true"] .tick { opacity: 1; }
 
@@ -789,7 +793,14 @@
   // it there until GitHub says so.
   const PR_RESOLVE = { pending: "not resolved there yet", failed: "not resolved there", done: "resolved there" };
 
-  const closing = (note) => (note.github === "posted" ? PR_RESOLVE[note.prResolve] || "" : "");
+  function closing(note) {
+    if (note.github !== "posted") return "";
+    if (note.prResolve === "done") return PR_RESOLVE.done;
+    // Read from the state, not from the moment it was closed: one closed before this desk tracked the pull request's
+    // own threads still owes a resolution there, and saying nothing would let the two disagree unnoticed.
+    if (note.state === "resolved") return PR_RESOLVE[note.prResolve] || PR_RESOLVE.pending;
+    return PR_RESOLVE[note.prResolve] || "";
+  }
 
   /* ---------- the log: what is waiting, what is on the PR, what is local only, what has moved on ---------- */
 

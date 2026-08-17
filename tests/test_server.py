@@ -253,6 +253,119 @@ def test_closing_a_posted_comment_resolves_its_thread_on_the_pull_request(desk):
     assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "none"
 
 
+def test_a_comment_closed_before_the_pull_request_knew_of_it_is_still_owed_a_resolution(desk):
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [{"branch": "feature", "path": "sample.py", "line": 21, "side": "new", "text": "closed early"}],
+            "github": True,
+        },
+    )
+    seq = made["seqs"][0]
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/5#review-1"}))
+    desk.post("/publish", {"repo": "someone/somewhere", "pr": 5, "seq": [seq]})
+
+    # As a comment closed by an older desk looks: resolved, posted, and owing the pull request nothing on its face.
+    with (desk.home / "comments.jsonl").open() as held:
+        rows = [json.loads(line) for line in held if line.strip()]
+    for row in rows:
+        if row["seq"] == seq:
+            row["state"] = "resolved"
+            row["prResolve"] = "none"
+    (desk.home / "comments.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    threads = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {
+                                "id": "T_early",
+                                "isResolved": False,
+                                "comments": {
+                                    "nodes": [
+                                        {
+                                            "databaseId": 601,
+                                            "body": "closed early",
+                                            "path": "sample.py",
+                                            "author": {"login": "duburcqa"},
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    desk.github_answers(
+        rules=[
+            {"match": "reviewThreads", "out": json.dumps(threads)},
+            {"match": "resolveReviewThread", "out": json.dumps({"data": {"resolveReviewThread": {}}})},
+        ]
+    )
+    # A sweep must notice it from its state alone, rather than only from the moment it was closed.
+    outcome = desk.post("/close", {"repo": "someone/somewhere", "pr": 5})
+    assert outcome["closed"] >= 1
+    assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "done"
+
+
+def test_syncing_resolves_there_what_was_closed_here(desk):
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [
+                {"branch": "feature", "path": "sample.py", "line": 22, "side": "new", "text": "closed here only"}
+            ],
+            "github": True,
+        },
+    )
+    seq = made["seqs"][0]
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/6#review-1"}))
+    desk.post("/publish", {"repo": "someone/somewhere", "pr": 6, "seq": [seq]})
+    desk.post("/resolve", {"seq": [seq], "who": "you"})
+
+    threads = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {
+                                "id": "T_here",
+                                "isResolved": False,
+                                "comments": {
+                                    "nodes": [
+                                        {
+                                            "databaseId": 701,
+                                            "body": "closed here only",
+                                            "path": "sample.py",
+                                            "author": {"login": "duburcqa"},
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    desk.github_answers(
+        rules=[
+            {"match": "reviewThreads", "out": json.dumps(threads)},
+            {"match": "resolveReviewThread", "out": json.dumps({"data": {"resolveReviewThread": {}}})},
+        ]
+    )
+    outcome = desk.post("/sync", {"repo": "someone/somewhere", "pr": 6})
+    # Resolution travels both ways: what was closed here is closed there by the same sync that brings their word back.
+    assert outcome["resolved"] >= 1
+    assert any("resolveReviewThread" in call and "T_here" in call for call in desk.github_calls())
+    assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "done"
+
+
 def test_closing_a_comment_that_never_reached_the_pull_request_owes_it_nothing(desk):
     made = desk.post(
         "/comments", [{"branch": "feature", "path": "sample.py", "line": 17, "side": "new", "text": "here only"}]
