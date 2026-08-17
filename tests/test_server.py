@@ -158,28 +158,55 @@ def test_a_comment_bound_for_github_waits_rather_than_being_lost(desk):
     rows = {row["seq"]: row for row in desk.get("/comments")}
     assert rows[made["seqs"][0]]["github"] == "pending"
 
-    # A repository that does not exist is a rejection GitHub owns, so the comment is kept with its reason and not
-    # attempted again - while still being in the log, which is the whole point.
-    outcome = desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1, "seq": made["seqs"]})
+    # Unreachable: the attempt did not happen, so the comment stays owed with its reason and a retry sweeps it up.
+    desk.github_answers(code=1, err="dial tcp: lookup api.github.com: no such host")
+    outcome = desk.post("/publish", {"repo": "someone/somewhere", "pr": 1, "seq": made["seqs"]})
     assert outcome["ok"] is False
     assert outcome["sent"] == 0
     kept = {row["seq"]: row for row in desk.get("/comments")}[made["seqs"][0]]
-    assert kept["github"] == "refused"
+    assert kept["github"] == "failed"
     assert kept["text"] == "for the PR"
-    assert kept["error"]
+    assert "no such host" in kept["error"]
+    owed = {row["seq"] for row in desk.get("/comments") if row["github"] in ("pending", "failed")}
+    assert made["seqs"][0] in owed
 
-    # A sweep of what is still owed leaves a refusal alone rather than attempting it forever.
-    again = desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1})
-    assert made["seqs"][0] not in {
-        row["seq"] for row in desk.get("/comments") if row["github"] in ("pending", "failed")
-    }
-    assert again["owed"] == len([row for row in desk.get("/comments") if row["github"] in ("pending", "failed")])
+    # It lands on a later try, and what it landed in is recorded against it.
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/1#pullrequestreview-42"}))
+    landed = desk.post("/publish", {"repo": "someone/somewhere", "pr": 1})
+    assert landed["ok"] is True
+    assert landed["sent"] >= 1
+    assert landed["owed"] == 0
+    posted = {row["seq"]: row for row in desk.get("/comments")}[made["seqs"][0]]
+    assert posted["github"] == "posted"
+    assert posted["reviewUrl"].endswith("pullrequestreview-42")
+    assert "error" not in posted
+
     # A sequence nobody owes anything for is not a post at all.
-    assert desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1, "seq": [99999]}) == {
+    assert desk.post("/publish", {"repo": "someone/somewhere", "pr": 1, "seq": [99999]}) == {
         "ok": True,
         "sent": 0,
         "owed": 0,
     }
+
+
+def test_a_comment_github_rejects_is_kept_and_not_retried(desk):
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [{"branch": "feature", "path": "sample.py", "line": 15, "side": "new", "text": "out of diff"}],
+            "github": True,
+        },
+    )
+    desk.github_answers(code=1, err="gh: Unprocessable Entity (HTTP 422)")
+    assert desk.post("/publish", {"repo": "someone/somewhere", "pr": 1, "seq": made["seqs"]})["ok"] is False
+    kept = {row["seq"]: row for row in desk.get("/comments")}[made["seqs"][0]]
+    assert kept["github"] == "refused"
+    assert "422" in kept["error"]
+
+    # Left out of every later sweep, so a rejection GitHub owns is not attempted forever.
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/1#pullrequestreview-43"}))
+    assert desk.post("/publish", {"repo": "someone/somewhere", "pr": 1})["sent"] == 0
+    assert {row["seq"]: row for row in desk.get("/comments")}[made["seqs"][0]]["github"] == "refused"
 
 
 def test_a_comment_not_bound_for_github_is_never_offered_to_it(desk):
@@ -189,7 +216,8 @@ def test_a_comment_not_bound_for_github_is_never_offered_to_it(desk):
     row = {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]
     assert row["github"] == "none"
     # Publishing everything owed must leave a comment that was never meant for the pull request alone.
-    desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1})
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/1#pullrequestreview-44"}))
+    desk.post("/publish", {"repo": "someone/somewhere", "pr": 1})
     assert {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]["github"] == "none"
 
 

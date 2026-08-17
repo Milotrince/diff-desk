@@ -7,6 +7,7 @@ Endpoints, all on 127.0.0.1 so nothing is exposed off the machine:
   POST /scan                  {dir, base, refs} - regenerate the payload and return it
   GET  /comments?since=N      every recorded comment past the cursor, each with its seq and batch
   POST /comments              {comments: [...], github: bool} - a batch as submitted, or a bare list of comments
+  POST /bind                  {seq: [...], github} - mark comments as bound for the pull request, or keep them local
   POST /edit                  {seq, text} - rewrite a comment, keeping what it said before
   POST /reply                 {seq, text, who} - add a reply to a comment, from the session or from the reviewer
   POST /resolve               {seq: [...], answer, resolved, who} - close comments, or reopen them
@@ -141,6 +142,8 @@ class Handler(BaseHTTPRequestHandler):
             self._record()
         elif path == "/scan":
             self._scan()
+        elif path == "/bind":
+            self._bind()
         elif path == "/edit":
             self._edit()
         elif path == "/reply":
@@ -202,6 +205,27 @@ class Handler(BaseHTTPRequestHandler):
             text = " ".join(str(note.get("text", "")).split())
             print(f"  COMMENT [{note['seq']}] {note.get('path', '?')}:{span} :: {text}", flush=True)
         self._json({"ok": True, "batch": group, "seq": seq, "seqs": [note["seq"] for note in batch]})
+
+    def _bind(self):
+        """Turn recorded comments towards the pull request, or back to local only.
+
+        A comment is often written before deciding whether it should go out, and a refusal or a change of mind should
+        not need the comment to be written again, so the decision stays changeable for as long as it has not landed.
+        """
+        order = self._body()
+        wanted = set(order.get("seq") or [])
+        bound = bool(order.get("github", True))
+        rows = read_notes()
+        turned = 0
+        for row in rows:
+            if row.get("seq") not in wanted or row.get("github") == "posted":
+                continue
+            row["github"] = "pending" if bound else "none"
+            row.pop("error", None)
+            turned += 1
+        write_notes(rows)
+        print(f"BIND {turned} comment(s) {'towards the pull request' if bound else 'back to local only'}", flush=True)
+        self._json({"ok": True, "bound": turned})
 
     def _edit(self):
         """Rewrite a comment, keeping every earlier wording."""
@@ -290,7 +314,7 @@ class Handler(BaseHTTPRequestHandler):
         target = f"repos/{order['repo']}/pulls/{order['pr']}/reviews"
         print(f"PUBLISH {len(review['comments'])} comment(s) -> {target}", flush=True)
         done = subprocess.run(
-            ["gh", "api", "--method", "POST", target, "--input", "-"],
+            [*gen_diff_data.github(), "api", "--method", "POST", target, "--input", "-"],
             input=json.dumps(review),
             capture_output=True,
             text=True,

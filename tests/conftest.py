@@ -70,6 +70,10 @@ class Desk:
         self.repo = repo
         self.home = home
 
+    def github_answers(self, code=0, out="", err=""):
+        """What the stand-in for gh replies to the next call, so every arm of a post can be exercised in place."""
+        (self.home / "fake_gh.json").write_text(json.dumps({"code": code, "out": out, "err": err}))
+
     def get(self, route):
         with urllib.request.urlopen(f"{self.url}{route}", timeout=30) as answer:
             return json.loads(answer.read() or b"null")
@@ -93,12 +97,20 @@ def desk(repo, tmp_path_factory):
     process = subprocess.Popen(
         [sys.executable, str(ROOT / "desk.py"), "serve", "--dir", str(repo), "--base", "main", "feature"],
         cwd=ROOT,
-        env={**os.environ, "DIFF_DESK_HOME": str(home), "DIFF_DESK_PORT": str(port)},
+        env={
+            **os.environ,
+            "DIFF_DESK_HOME": str(home),
+            "DIFF_DESK_PORT": str(port),
+            # GitHub is answered for by a stand-in, so posting is exercised without a network or a login.
+            "DIFF_DESK_GH": f"{sys.executable} {ROOT / 'tests' / 'fake_gh.py'}",
+            "FAKE_GH_SCRIPT": str(home / "fake_gh.json"),
+        },
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
     )
     running = Desk(f"http://127.0.0.1:{port}", repo, home)
+    running.github_answers(code=1, err="gh: Not Found (HTTP 404)")
     for _ in range(200):
         if process.poll() is not None:
             pytest.fail(f"the desk exited: {process.stdout.read()}")

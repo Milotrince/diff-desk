@@ -5,9 +5,15 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 import time
+
+
+def github():
+    """The command that talks to GitHub. Overridable so a test can answer for it without a network or a login."""
+    return shlex.split(os.environ.get("DIFF_DESK_GH", "gh"))
 
 
 def home():
@@ -32,7 +38,7 @@ def canonical_repo(root):
         if not match:
             continue
         slug = subprocess.run(
-            ["gh", "api", f"repos/{match.group(1)}", "--jq", ".full_name"],
+            [*github(), "api", f"repos/{match.group(1)}", "--jq", ".full_name"],
             capture_output=True,
             text=True,
             timeout=40,
@@ -59,8 +65,9 @@ def fetch_pull(root, upstream, number):
     """
     if not upstream:
         raise RuntimeError(f"#{number} needs a GitHub remote to resolve against, and this repository has none")
+    wanted = "number,title,url,headRefName,baseRefName"
     seen = subprocess.run(
-        ["gh", "pr", "view", str(number), "--repo", upstream, "--json", "number,title,url,headRefName,baseRefName"],
+        [*github(), "pr", "view", str(number), "--repo", upstream, "--json", wanted],
         capture_output=True,
         text=True,
         cwd=root,
@@ -148,7 +155,7 @@ def pull_requests(root, upstream):
     a request each and a single hiccup silently drops that branch's link."""
     out = subprocess.run(
         [
-            "gh",
+            *github(),
             "pr",
             "list",
             "--repo",

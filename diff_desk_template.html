@@ -330,7 +330,11 @@
   tr:hover .pin, .pin.held { opacity: 1; pointer-events: auto; }
   .pin:focus-visible { opacity: 1; pointer-events: auto; outline: 2px solid var(--accent); outline-offset: 1px; }
 
-  .noterow td { padding: 0; background: var(--surface-sunk); }
+  /* The table is as wide as its widest line, so a comment left to that width puts everything after its text - the
+     chip that unfolds it, the buttons - beyond the right edge, unreachable and never clipped. Pinned to the left of
+     the scrolling body and sized to what is actually visible, measured on the body itself. */
+  .noterow td { padding: 0; background: var(--surface-sunk); position: sticky; left: 0; z-index: 1; }
+  .noterow td > * { width: var(--seen, 100%); box-sizing: border-box; }
   .notebox { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-left: 3px solid var(--accent); }
   .notebox textarea, .tray textarea {
     font: inherit;
@@ -371,7 +375,7 @@
   }
   .thread .line { display: flex; align-items: baseline; gap: 8px; }
   .thread .who { flex: none; font-family: var(--mono); font-size: 11px; color: var(--muted); }
-  .thread .said { flex: 1; min-width: 0; white-space: pre-wrap; }
+  .thread .said { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
   .thread .said pre {
     margin: 4px 0;
     padding: 6px 8px;
@@ -388,12 +392,12 @@
     background: var(--surface-sunk);
     border-radius: 3px;
   }
-  .thread.folded .said pre { display: none; }
   .thread.draft { background: transparent; border-left-style: dashed; }
   .thread.draft .who { color: var(--accent); }
   .thread.done { background: var(--add-bg); border-left-color: var(--add-gutter); }
   .thread.folded { padding: 4px 10px; }
   .thread.folded .said { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .thread.folded { flex-direction: row; align-items: baseline; }
   .thread.done > .line:first-child .said { color: var(--muted); }
   .thread .reply { padding-left: 10px; border-left: 1px solid var(--rule-strong); }
   .thread .reply.session .who { color: var(--accent); }
@@ -467,6 +471,9 @@
   .mark.posted, .mark.resolved { color: var(--add-ink); background: var(--add-bg); }
   .mark.outdated { color: var(--stale); background: var(--stale-bg); }
   .mark.open, .mark.none { color: var(--muted); background: var(--surface); border: 1px solid var(--rule); }
+  button.mark { font: inherit; font-size: 10.5px; cursor: pointer; border: 1px solid transparent; }
+  button.mark.none { border-color: var(--rule); }
+  button.mark:hover { color: var(--accent); border-color: var(--accent); }
 
   .tray {
     position: fixed;
@@ -610,6 +617,7 @@
   <div class="rows" id="logrows"></div>
   <div class="actions">
     <button class="solid" id="logretry">Send what is waiting</button>
+    <button class="ghost" id="logbind">Send the local ones too</button>
     <span class="status" id="logresult"></span>
   </div>
 </div>
@@ -653,7 +661,7 @@
   const unfolded = new Set();
 
   const els = {};
-  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logclose", "logresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
+  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logclose", "logresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
     els[id] = document.getElementById(id);
   }
 
@@ -748,7 +756,7 @@
 
   function showStatus(staleCount) {
     const bits = [];
-    const rows = notes.sent.filter((note) => note.path !== "(review)");
+    const rows = mine();
     const closed = rows.filter((note) => note.state === "resolved").length;
     const owed = rows.filter((note) => OWED.includes(note.github)).length;
     if (rows.length) bits.push(`<b>${rows.length}</b> comment${rows.length === 1 ? "" : "s"}, ${closed} resolved`);
@@ -795,7 +803,12 @@
     if (posted) counted.push(`${posted} on the PR`);
     els.logcount.textContent = counted.join(" \u00b7 ");
     els.logopen.textContent = owed.length ? `Comments (${owed.length} waiting)` : `Comments (${rows.length})`;
+    const local = rows.filter((note) => note.github === "none");
     els.logretry.disabled = !owed.length;
+    els.logbind.disabled = !local.length || !branch().pr;
+    els.logbind.textContent = local.length
+      ? `Send the ${local.length} local one${local.length === 1 ? "" : "s"} too`
+      : "Send the local ones too";
     els.logrows.innerHTML = "";
     for (const note of rows) {
       const item = document.createElement("button");
@@ -919,6 +932,13 @@
     posted: "on the PR",
   };
 
+  const outline = (text) =>
+    String(text)
+      .replace(/```[a-z0-9+#-]*/gi, " ")
+      .replace(/`/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
   function written(host, text) {
     // Comments are typed by hand, so the little markdown that carries meaning is honoured: a fenced block stays code
     // with its indentation, backticks stay code, and line breaks stay where they were put. Assembled as nodes rather
@@ -986,7 +1006,9 @@
       head.append(turn);
     }
     if (settled) {
-      // Folded: the remark and its standing, nothing else. Everything it holds is one click away, never discarded.
+      // Folded: one line about what it is, and its standing. Everything it holds is a click away, never discarded.
+      text.textContent = "";
+      text.textContent = outline(note.text);
       box.append(head);
       cell.append(box);
       row.append(cell);
@@ -1043,12 +1065,23 @@
       mark.title = `${note.path} ${span(note)} is no longer in this diff`;
       head.append(mark);
     }
-    if (!note.pending && note.github && note.github !== "none") {
-      const mark = document.createElement("span");
-      mark.className = `mark ${note.github}`;
-      mark.textContent = GITHUB_MARK[note.github] || note.github;
-      if (note.error) mark.title = note.error;
-      if (note.reviewUrl) mark.title = note.reviewUrl;
+    if (!note.pending) {
+      const mark = document.createElement(note.github === "posted" || !notes.live ? "span" : "button");
+      mark.className = mark.tagName === "BUTTON" ? `mark ${note.github} act` : `mark ${note.github}`;
+      mark.textContent = note.github === "none" ? "local only" : GITHUB_MARK[note.github] || note.github;
+      mark.title =
+        note.reviewUrl ||
+        note.error ||
+        (note.github === "none" ? "Send this one to the pull request" : "Keep this one out of the pull request");
+      if (mark.tagName === "BUTTON") {
+        mark.addEventListener("click", async () => {
+          await post("bind", { seq: [note.seq], github: note.github === "none" });
+          await loadNotes();
+          if (note.github === "none") await retryOwed(false);
+          drawLog();
+          render();
+        });
+      }
       head.append(mark);
     }
     if (note.pending) {
@@ -1150,10 +1183,7 @@
   // Dragging over lines selects the range covered, and letting go opens the comment box on it. The row under the
   // pointer is found by position instead of by event target: once a press has begun a text selection, browsers stop
   // retargeting hover events to the elements passing underneath, so a target-based drag never leaves its first line.
-  const drag = { on: false, armed: null, ranged: false, at: 0 };
-
-  // How far down the pointer must travel before a press on code becomes a range rather than a text selection.
-  const LEAVES_LINE = 6;
+  const drag = { on: false, armed: null, ranged: false };
 
   function rowAt(x, y) {
     const node = document.elementFromPoint(x, y);
@@ -1162,14 +1192,12 @@
 
   function startDrag(row) {
     drag.on = true;
-    drag.armed = null;
     drag.ranged = false;
     pick(row, false);
     document.body.classList.add("dragging");
   }
 
   function endDrag() {
-    drag.armed = null;
     document.querySelectorAll(".pin.held").forEach((pin) => pin.classList.remove("held"));
     if (!drag.on) return;
     drag.on = false;
@@ -1178,16 +1206,7 @@
   }
 
   function overDrag(x, y) {
-    if (!drag.on && drag.armed === null) return;
-    if (!drag.on) {
-      // Judged on the travel rather than on what sits under the pointer: a wide code cell, a comment thread or a
-      // hunk header may all pass beneath a drag, and none of them mean the gesture was meant to stay a text
-      // selection. Horizontal travel alone still selects text within the line.
-      if (Math.abs(y - drag.at) <= LEAVES_LINE) return;
-      const text = window.getSelection();
-      if (text) text.removeAllRanges();
-      startDrag(drag.armed);
-    }
+    if (!drag.on) return;
     let row = rowAt(x, y);
     if (!row) {
       // The pointer sits over something floating above the lines - the page header, a file name bar - or past the
@@ -1585,6 +1604,11 @@
     paintSel();
   }
 
+  // What each file's body can actually show, so comments hanging inside it are sized to the reader's view.
+  const roomFor = new ResizeObserver((entries) => {
+    for (const entry of entries) entry.target.style.setProperty("--seen", `${Math.round(entry.contentRect.width)}px`);
+  });
+
   function card(file, index) {
     const status = seenState(file);
     const wrap = document.createElement("section");
@@ -1638,6 +1662,7 @@
 
     const body = document.createElement("div");
     body.className = "body";
+    roomFor.observe(body);
     if (file.binary) {
       const note = document.createElement("div");
       note.className = "empty";
@@ -1727,12 +1752,10 @@
         row.addEventListener("pointerdown", (event) => {
           if (event.button !== 0 || event.shiftKey) return;
           if (event.target.closest("button, textarea, input")) return;
-          // A press on the rail drags at once - the rail carries no selectable text - while one on the code only
-          // becomes a drag when it leaves the line, so selecting text inside a single line keeps working.
-          if (event.target.closest("td.code")) {
-            drag.armed = row;
-            drag.at = event.clientY;
-          } else startDrag(row);
+          // Only the rail starts a range: it carries no text. Dragging across the code is how one selects the code
+          // itself, and a range drag there would wipe that selection the moment it left the line.
+          if (event.target.closest("td.code")) return;
+          startDrag(row);
         });
         row.append(left, right, gut, mark, code);
         tbody.append(row);
@@ -1898,6 +1921,13 @@
     els.log.dataset.open = "false";
   });
   els.logretry.addEventListener("click", () => retryOwed(true));
+  els.logbind.addEventListener("click", async () => {
+    const local = mine().filter((note) => note.github === "none");
+    if (!local.length || !branch().pr) return;
+    await post("bind", { seq: local.map((note) => note.seq), github: true });
+    await loadNotes();
+    await retryOwed(true);
+  });
   // Coming back online is the moment a post that could not be made becomes possible again.
   window.addEventListener("online", () => retryOwed(false));
   els.traydrop.addEventListener("click", () => {
@@ -1938,7 +1968,7 @@
   setInterval(async () => {
     // Never redraw under a gesture: rebuilding the table destroys the pin holding the pointer, and the release that
     // would have opened the comment box is delivered to a node that is no longer in the page.
-    if (drag.on || drag.armed) return;
+    if (drag.on) return;
     if (!notes.live || document.querySelector("tr[data-composer]") || notes.drafts.length) return;
     await loadNotes();
     drawLog();

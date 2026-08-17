@@ -106,7 +106,7 @@ def drag(page, first, last, column):
     return held, page.locator("tr.sel").count()
 
 
-@pytest.mark.parametrize("column", ["pin", "rail", "code"])
+@pytest.mark.parametrize("column", ["pin", "rail"])
 @pytest.mark.parametrize("upward", [False, True])
 def test_dragging_lines_selects_the_range_and_opens_the_box(page, column, upward):
     # Within one file: a range belongs to a single diff, so the rows are taken from one card rather than by position.
@@ -266,6 +266,50 @@ def test_a_comment_keeps_its_code_and_its_line_breaks(page, desk):
     assert page.locator(".thread .said", has_text="<b>bold</b>").count() >= 1
 
 
+def test_a_local_comment_can_be_turned_towards_the_pull_request(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    made = desk.post(
+        "/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": "local first"}]
+    )
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    thread = page.locator(f"#note-{made['seq']}")
+    standing = thread.locator("button.mark").first
+    assert standing.inner_text() == "local only"
+    # The decision is changeable after the fact, so a comment written before deciding does not have to be rewritten.
+    standing.click()
+    page.wait_for_timeout(400)
+    assert {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]["github"] in ("pending", "failed", "refused")
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    back = page.locator(f"#note-{made['seq']} button.mark").first
+    assert back.inner_text() != "local only"
+    back.click()
+    page.wait_for_timeout(400)
+    assert {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]["github"] == "none"
+
+
+def test_a_folded_thread_says_what_it_is_about_even_when_it_is_only_code(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    made = desk.post(
+        "/comments",
+        [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": "```py\nreturn 1\n```"}],
+    )
+    desk.post("/resolve", {"seq": [made["seq"]], "who": "session"})
+    page.reload(wait_until="load")
+    page.wait_for_selector(f"#note-{made['seq']} .thread.folded")
+    said = page.locator(f"#note-{made['seq']} .said").first
+    # Folded to one line, and a comment made only of code still says what it is about rather than showing nothing.
+    assert said.inner_text().strip() == "return 1"
+    # Everything hanging under a diff is sized to what is on screen, so nothing sits beyond the right edge.
+    fits = page.evaluate(f"""() => {{
+      const thread = document.querySelector('#note-{made["seq"]} .thread');
+      const body = thread.closest('.body');
+      return thread.getBoundingClientRect().width <= body.clientWidth + 1;
+    }}""")
+    assert fits
+
+
 def test_the_log_says_where_every_comment_stands(page, desk):
     branch = page.evaluate("() => data.branches[0].ref")
     desk.post(
@@ -327,14 +371,21 @@ def test_a_release_the_page_never_sees_does_not_leave_it_dragging(page):
     page.mouse.up()
 
 
-def test_selecting_text_inside_a_line_stays_a_text_selection(page):
-    box = rows(page).nth(4).locator("td.code").first.bounding_box()
-    page.mouse.move(box["x"] + 20, box["y"] + box["height"] / 2)
+def test_dragging_across_the_code_selects_the_code(page):
+    lines = sample(page).locator("tr[data-line]")
+    lines.nth(2).evaluate("node => node.scrollIntoView({block: 'center'})")
+    page.wait_for_timeout(80)
+    one = lines.nth(2).locator("td.code").first.bounding_box()
+    four = lines.nth(5).locator("td.code").first.bounding_box()
+    page.mouse.move(one["x"] + 20, one["y"] + one["height"] / 2)
     page.mouse.down()
     for step in range(1, 11):
-        page.mouse.move(box["x"] + 20 + step * 12, box["y"] + box["height"] / 2)
+        page.mouse.move(one["x"] + 20 + step * 8, one["y"] + (four["y"] - one["y"]) * step / 10)
+        page.wait_for_timeout(10)
     page.mouse.up()
-    assert page.locator("tr.sel").count() <= 1
+    # Dragging over code is how code is copied, so it selects text and starts no range and no comment box.
+    assert page.evaluate("() => String(window.getSelection()).length") > 10
+    assert page.locator("tr.sel").count() == 0
     assert page.locator("tr[data-composer='true']").count() == 0
 
 

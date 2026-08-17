@@ -5,6 +5,7 @@ desk.py watch [--since N]                            block until a review batch 
 desk.py comments [--all]                             what has been submitted, unresolved unless --all
 desk.py reply 3 "why it happens ..."                 answer a comment without closing it
 desk.py edit 3 "what I actually meant ..."            rewrite a comment, keeping what it said before
+desk.py bind 3 4 [--local]                           aim comments at the pull request, or keep them local
 desk.py resolve 3 4 --answer "fixed in abc1234"      answer and close; --reopen puts them back
 desk.py refs --dir <repo> --base <ref>               the branches ahead of a base, and the open pull requests
 """
@@ -109,6 +110,13 @@ def comments(args):
         show(note)
 
 
+def bind(args):
+    outcome = ask("/bind", {"seq": args.seq, "github": not args.local})
+    if outcome is None:
+        sys.exit("nothing is serving")
+    print(f"{outcome['bound']} comment(s) now {'local only' if args.local else 'bound for the pull request'}")
+
+
 def edit(args):
     outcome = ask("/edit", {"seq": args.seq, "text": " ".join(args.text)})
     if outcome is None:
@@ -171,6 +179,11 @@ job.set_defaults(run=watch)
 job = jobs.add_parser("comments", help="what has been submitted")
 job.add_argument("--all", action="store_true", help="include the ones already addressed")
 job.set_defaults(run=comments)
+
+job = jobs.add_parser("bind", help="aim comments at the pull request, or keep them local")
+job.add_argument("seq", nargs="+", type=int)
+job.add_argument("--local", action="store_true", help="keep them out of the pull request instead")
+job.set_defaults(run=bind)
 
 job = jobs.add_parser("edit", help="rewrite a comment, keeping what it said before")
 job.add_argument("seq", type=int)

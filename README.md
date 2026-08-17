@@ -28,8 +28,8 @@ every open pull request, filterable together.
 
 On the page:
 
-- **Drag over lines** - anywhere on the line, or over the `+` - to select a range, and let go to open the comment box.
-  A range may cover removed and added lines together.
+- **Drag the line numbers or the `+`** to select a range, and let go to open the comment box. A range may cover removed
+  and added lines together. Dragging across the code selects the code, as anywhere else - that is how it is copied.
 - **`+20 up` / `+20 down` / `all N`** on each hunk header, and `+20 below` at the end of a file, bring in the lines the
   diff left out, read from the file at that branch's revision.
 - **Reviewed** folds a file away. The tick is remembered per branch and per file digest, so a file whose diff changes
@@ -45,6 +45,9 @@ On the page:
   moved on from what the pull request holds.
 - **Comments** in the header opens the log: every comment on the branch, whether it is open or resolved, whether it is
   waiting for GitHub, already on the pull request, or local only. Clicking one jumps to it.
+- **The standing of a comment is a control, not a label.** Click "local only" on a comment to send that one to the pull
+  request, or the panel's button to send every local one at once; click it again to keep a comment out. The decision
+  stays changeable until it lands, so a comment written before deciding never has to be written twice.
 
 A comment whose line is no longer in the diff - the branch moved on, the code was rewritten - is **kept**, marked "code
 moved on", and shown at the end of the file it belonged to. It is never resolved or deleted on your behalf.
