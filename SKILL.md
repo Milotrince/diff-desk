@@ -55,7 +55,8 @@ after each batch; it resumes from the current end unless given `--since N`.
   post that does not land leaves its comments marked as still owed, with the reason kept, and they are retried from the
   page - so a GitHub outage never costs a comment and never needs cleaning up by hand. A comment GitHub rejects outright
   is marked `refused` rather than retried forever.
-- A comment can be sent on its own from the box or batched into a review; both are recorded and threaded identically.
+- A comment can be sent on its own from the box, sent alone out of the review tray, or batched into a review; the
+  Comments panel groups comments by batch and sends them one batch at a time. All of it is recorded identically.
 - Whether a comment is bound for the pull request can be changed after it was recorded, from the page or with
   `desk.py bind <seq...> [--local]`, for as long as it has not landed.
 - A comment whose line has left the diff is kept and marked, never resolved or dropped on the reviewer's behalf.

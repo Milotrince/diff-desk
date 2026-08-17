@@ -70,9 +70,14 @@ class Desk:
         self.repo = repo
         self.home = home
 
-    def github_answers(self, code=0, out="", err=""):
-        """What the stand-in for gh replies to the next call, so every arm of a post can be exercised in place."""
-        (self.home / "fake_gh.json").write_text(json.dumps({"code": code, "out": out, "err": err}))
+    def github_answers(self, code=0, out="", err="", rules=()):
+        """What the stand-in for gh replies to the next call, so every arm of a post can be exercised in place.
+
+        A rule is `{"match": <text found in the arguments>, "out"/"err"/"code": ...}`, for a run where resolving a
+        repository, listing its pull requests and posting a review must be answered differently.
+        """
+        reply = {"code": code, "out": out, "err": err, "rules": list(rules)}
+        (self.home / "fake_gh.json").write_text(json.dumps(reply))
 
     def get(self, route):
         with urllib.request.urlopen(f"{self.url}{route}", timeout=30) as answer:

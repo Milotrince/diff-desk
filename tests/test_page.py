@@ -4,8 +4,12 @@ Pointer handling and sticky positioning differ between engines, so these run per
 engine is skipped, never silently dropped from the run.
 """
 
+import json
+import time
+
 import pytest
 
+import gen_diff_data
 from conftest import FIRST_EDIT, SECOND_EDIT
 
 playwright = pytest.importorskip("playwright.sync_api")
@@ -45,6 +49,17 @@ def page(browser, desk):
     yield opened
     assert problems == []
     opened.close()
+
+
+def until(question, seconds=10.0):
+    """Wait for a state the desk reports rather than for a guessed number of milliseconds."""
+    limit = time.monotonic() + seconds
+    while time.monotonic() < limit:
+        answer = question()
+        if answer:
+            return answer
+        time.sleep(0.1)
+    raise AssertionError("the desk never reported it")
 
 
 def rows(page, kind=""):
@@ -342,6 +357,82 @@ def test_a_comment_stays_inside_the_view_when_the_diff_is_scrolled(page, desk):
         assert held["rightGap"] == 0
         assert held["lastInside"]
     page.set_viewport_size({"width": 1500, "height": 900})
+
+
+def test_a_pending_comment_can_be_sent_on_its_own_from_the_tray(page, desk):
+    lines = sample(page).locator("tr.a[data-line]")
+    for index, text in ((0, "the first remark"), (1, "the second remark")):
+        line = lines.nth(index)
+        line.locator("td.code").first.hover()
+        line.locator("button.pin").first.click()
+        page.locator("tr[data-composer='true'] textarea").fill(text)
+        page.locator("tr[data-composer='true'] button.solid:not(.direct)").click()
+    assert page.locator("#traylist li").count() == 2
+    before = len(desk.get("/comments"))
+
+    page.locator("#traylist li button.tiny").first.click()
+    # One leaves, the rest stay pending: a review is not held up by the comment still being thought about.
+    page.wait_for_function("() => document.querySelectorAll('#traylist li').length === 1")
+    until(lambda: len(desk.get("/comments")) == before + 1)
+    assert page.locator("#tray").get_attribute("data-open") == "true"
+    rows = desk.get("/comments")
+    assert len(rows) == before + 1
+    assert rows[-1]["text"] == "the first remark"
+    page.locator("#traydrop").click()
+
+
+def test_each_recorded_batch_can_be_sent_by_itself(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    for text in ("first batch", "second batch"):
+        desk.post(
+            "/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": text}]
+        )
+    listed = desk.get("/comments")
+    batches = [row["batch"] for row in listed[-2:]]
+    assert batches[0] != batches[1]
+
+    # A pull request is what makes sending possible, so the repository is given one for the length of this test.
+    knows = [
+        {"match": "repos/someone/somewhere --jq", "out": "someone/somewhere"},
+        {"match": "pr list", "out": json.dumps([{"number": 7, "url": "u", "title": "t", "headRefName": branch}])},
+    ]
+    desk.github_answers(rules=knows)
+    gen_diff_data.run(desk.repo, "remote", "add", "origin", "https://github.com/someone/somewhere.git")
+    try:
+        rescan = desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})
+        assert rescan["ok"], rescan.get("error")
+        page.reload(wait_until="load")
+        page.wait_for_selector("section.file")
+        page.locator("#logopen").click()
+        page.wait_for_selector("#log[data-open='true']")
+        groups = page.locator("#logrows .batch")
+        assert groups.count() >= 2
+        sends = page.locator("#logrows .batchhead button.tiny")
+        # Every batch still holding something unposted can be sent by itself; one already on the PR offers nothing.
+        pending = {
+            row["batch"] for row in desk.get("/comments") if row["branch"] == branch and row["github"] != "posted"
+        }
+        assert sends.count() == len(pending)
+        assert "PR #7" in sends.last.inner_text()
+
+        # Sending one batch leaves the others exactly as they were.
+        landed = {"match": "/reviews", "out": json.dumps({"html_url": "https://github.com/x/y/pull/7#review-9"})}
+        desk.github_answers(rules=[landed, *knows])
+        sends.last.click()
+        after = until(
+            lambda: (
+                {row["seq"]: row for row in desk.get("/comments")}
+                if {row["seq"]: row for row in desk.get("/comments")}[listed[-1]["seq"]]["github"] == "posted"
+                else None
+            )
+        )
+        # Sending one batch leaves every other comment exactly as it was.
+        assert after[listed[-1]["seq"]]["github"] == "posted"
+        assert after[listed[-2]["seq"]]["github"] == "none"
+    finally:
+        gen_diff_data.run(desk.repo, "remote", "remove", "origin")
+        desk.github_answers(code=1, err="gh: Not Found (HTTP 404)")
+        desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})
 
 
 def test_the_log_says_where_every_comment_stands(page, desk):

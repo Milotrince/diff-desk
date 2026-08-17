@@ -37,6 +37,9 @@ On the page:
 - **Send** in the comment box posts that one comment immediately; **Add to review** keeps it for a batch that goes out
   together with **Submit review** and an optional overall note. Both take the same path, so a lone comment is recorded,
   threaded and posted exactly like a batch.
+- **Nothing has to go out all at once.** Each comment waiting in the review tray has its own Send, leaving the rest
+  pending, and the Comments panel groups everything by the batch it was written in, with a Send for each - so batches go
+  to the pull request one at a time, in whatever order suits.
 - **Every comment is a thread.** Either side can reply, and either side can resolve or reopen it. Resolving folds the
   thread to its remark alone and keeps every reply behind one click; nothing is ever deleted.
 - **Code stays code.** A fenced block keeps its indentation as a code block, backticks stay inline code, and line

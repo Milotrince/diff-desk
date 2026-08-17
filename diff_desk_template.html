@@ -452,7 +452,13 @@
   .log[data-open="true"] { display: flex; }
   .log .head { display: flex; align-items: baseline; gap: 10px; }
   .log .head .ghost { margin-left: auto; }
-  .log .rows { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+  .log .rows { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+  .batch { display: flex; flex-direction: column; gap: 4px; }
+  .batchhead { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+  .batchhead b { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .batchhead .said { flex: 1; }
+  .tray li { display: flex; align-items: baseline; gap: 6px; }
+  .tray li .said { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .log .actions { display: flex; align-items: center; gap: 8px; }
   .logrow {
     display: flex;
@@ -817,36 +823,33 @@
       ? `Send the ${local.length} local one${local.length === 1 ? "" : "s"} too`
       : "Send the local ones too";
     els.logrows.innerHTML = "";
+    const batches = new Map();
     for (const note of rows) {
-      const item = document.createElement("button");
-      item.className = "logrow";
-      item.dataset.state = note.state;
-      const where = document.createElement("b");
-      where.textContent = `${note.path.split("/").pop()} ${span(note)}`;
-      const said = document.createElement("span");
-      said.className = "said";
-      said.textContent = note.text.split("\n")[0].slice(0, 90);
-      item.append(where, said);
-      for (const [label, kind] of [
-        [note.state === "resolved" ? "resolved" : "open", note.state],
-        [note.github === "none" ? "local only" : GITHUB_MARK[note.github], note.github],
-        [isOutdated(note, keys) ? "code moved on" : "", "outdated"],
-      ]) {
-        if (!label) continue;
-        const mark = document.createElement("span");
-        mark.className = `mark ${kind}`;
-        mark.textContent = label;
-        if (note.error && kind === "failed") mark.title = note.error;
-        item.append(mark);
+      if (!batches.has(note.batch)) batches.set(note.batch, []);
+      batches.get(note.batch).push(note);
+    }
+    for (const [id, held] of batches) {
+      const group = document.createElement("div");
+      group.className = "batch";
+      const title = document.createElement("div");
+      title.className = "batchhead";
+      const name = document.createElement("b");
+      name.textContent = id ? `batch ${id}` : "earlier";
+      const size = document.createElement("span");
+      size.className = "said";
+      size.textContent = `${held.length} comment${held.length === 1 ? "" : "s"}`;
+      title.append(name, size);
+      const sendable = held.filter((note) => note.github !== "posted");
+      if (sendable.length && branch().pr && notes.live) {
+        const alone = document.createElement("button");
+        alone.className = "tiny";
+        alone.textContent = `Send batch to PR #${branch().pr.number}`;
+        alone.addEventListener("click", () => sendBatch(sendable));
+        title.append(alone);
       }
-      item.addEventListener("click", () => {
-        const row = document.querySelector(
-          `tr[data-path="${CSS.escape(note.path)}"][data-side="${note.side}"][data-line="${note.endLine || note.line}"]`,
-        );
-        const card = document.getElementById(`note-${note.seq}`) || row;
-        if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
-      els.logrows.append(item);
+      group.append(title);
+      els.logrows.append(group);
+      for (const note of held) group.append(logRow(note, keys));
     }
     if (!rows.length) {
       const empty = document.createElement("div");
@@ -854,6 +857,57 @@
       empty.textContent = "No comments on this branch yet.";
       els.logrows.append(empty);
     }
+  }
+
+  async function sendBatch(held) {
+    const request = branch().pr;
+    if (!request) return;
+    const local = held.filter((note) => note.github === "none").map((note) => note.seq);
+    if (local.length) await post("bind", { seq: local, github: true });
+    els.logresult.textContent = `Sending ${held.length} to PR #${request.number}...`;
+    const outcome = await post("publish", {
+      repo: data.upstream,
+      pr: request.number,
+      seq: held.map((note) => note.seq),
+    });
+    els.logresult.textContent = outcome.ok
+      ? `Sent ${outcome.sent} to PR #${request.number}`
+      : `Still waiting: ${outcome.error || "GitHub unreachable"}`;
+    await loadNotes();
+    drawLog();
+    render();
+  }
+
+  function logRow(note, keys) {
+    const item = document.createElement("button");
+    item.className = "logrow";
+    item.dataset.state = note.state;
+    const where = document.createElement("b");
+    where.textContent = `${note.path.split("/").pop()} ${span(note)}`;
+    const said = document.createElement("span");
+    said.className = "said";
+    said.textContent = note.text.split("\n")[0].slice(0, 90);
+    item.append(where, said);
+    for (const [label, kind] of [
+      [note.state === "resolved" ? "resolved" : "open", note.state],
+      [note.github === "none" ? "local only" : GITHUB_MARK[note.github], note.github],
+      [isOutdated(note, keys) ? "code moved on" : "", "outdated"],
+    ]) {
+      if (!label) continue;
+      const mark = document.createElement("span");
+      mark.className = `mark ${kind}`;
+      mark.textContent = label;
+      if (note.error && kind === "failed") mark.title = note.error;
+      item.append(mark);
+    }
+    item.addEventListener("click", () => {
+      const row = document.querySelector(
+        `tr[data-path="${CSS.escape(note.path)}"][data-side="${note.side}"][data-line="${note.endLine || note.line}"]`,
+      );
+      const card = document.getElementById(`note-${note.seq}`) || row;
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return item;
   }
 
   async function retryOwed(loud) {
@@ -880,13 +934,21 @@
     els.tray.dataset.open = String(notes.drafts.length > 0);
     els.traycount.textContent = `${notes.drafts.length} comment${notes.drafts.length === 1 ? "" : "s"} pending`;
     els.traylist.innerHTML = "";
-    notes.drafts.forEach((draft, index) => {
+    for (const draft of notes.drafts) {
       const item = document.createElement("li");
       const where = document.createElement("b");
       where.textContent = `${draft.path.split("/").pop()} ${span(draft)}`;
-      item.append(where, document.createTextNode(` — ${draft.text.split("\n")[0].slice(0, 56)}`));
+      const said = document.createElement("span");
+      said.className = "said";
+      said.textContent = ` ${outline(draft.text).slice(0, 70)}`;
+      const alone = document.createElement("button");
+      alone.className = "tiny";
+      alone.textContent = "Send";
+      alone.title = "Send this one now and keep the rest pending";
+      alone.addEventListener("click", () => sendAll([draft], ""));
+      item.append(where, said, alone);
       els.traylist.append(item);
-    });
+    }
   }
 
   async function sendAll(drafts, summary) {

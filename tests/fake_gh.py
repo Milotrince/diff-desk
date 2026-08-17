@@ -1,7 +1,8 @@
 """Stand in for the gh command, answering exactly as the test in charge asked it to.
 
 The reply is read at each call from the file named by FAKE_GH_SCRIPT, so one running desk can be made to succeed, to be
-refused, or to be unreachable, without a network or a login.
+refused, or to be unreachable, without a network or a login. A script may carry rules matched against the arguments,
+since resolving a repository, listing its pull requests and posting a review are all `gh` yet answered differently.
 """
 
 import json
@@ -10,7 +11,10 @@ import pathlib
 import sys
 
 asked = json.loads(pathlib.Path(os.environ["FAKE_GH_SCRIPT"]).read_text())
-sys.stdin.read()
-sys.stdout.write(asked.get("out", ""))
-sys.stderr.write(asked.get("err", ""))
-raise SystemExit(asked.get("code", 0))
+asking = " ".join(sys.argv[1:])
+wanted = next((rule for rule in asked.get("rules", []) if rule["match"] in asking), asked)
+# Whatever is being piped in is left unread: only a posted review is given anything, and the calls that resolve a
+# repository inherit a standard input that never ends, which reading would wait on for good.
+sys.stdout.write(wanted.get("out", ""))
+sys.stderr.write(wanted.get("err", ""))
+raise SystemExit(wanted.get("code", 0))
