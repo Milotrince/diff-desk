@@ -599,6 +599,53 @@ def test_expanding_every_gap_reaches_the_whole_file(page):
     assert shown["lines"] >= SECOND_EDIT
 
 
+def test_a_branch_with_a_pull_request_says_which_and_opens_it(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    knows = [
+        {"match": "repos/someone/somewhere --jq", "out": "someone/somewhere"},
+        {
+            "match": "pr list",
+            "out": json.dumps(
+                [
+                    {
+                        "number": 7,
+                        "url": "https://github.com/someone/somewhere/pull/7",
+                        "title": "A tidy change",
+                        "headRefName": branch,
+                    }
+                ]
+            ),
+        },
+    ]
+    desk.github_answers(rules=knows)
+    gen_diff_data.run(desk.repo, "remote", "add", "origin", "https://github.com/someone/somewhere.git")
+    try:
+        assert desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})["ok"]
+        page.reload(wait_until="load")
+        page.wait_for_selector(".tab")
+        tab = page.locator(".tab").first
+        # Hovering says what the pull request is; the mark shows that the chosen tab now leads to it.
+        assert "A tidy change" in tab.get_attribute("title")
+        assert "https://github.com/someone/somewhere/pull/7" in tab.get_attribute("title")
+        assert tab.get_attribute("aria-selected") == "true"
+        assert tab.locator(".away").count() == 1
+
+        # What the page asks the browser to open, rather than following it: a test must reach no further than itself.
+        page.evaluate("""() => {
+          window.__opened = [];
+          window.open = (url) => {
+            window.__opened.push(url);
+            return null;
+          };
+        }""")
+        tab.click()
+        assert page.evaluate("() => window.__opened") == ["https://github.com/someone/somewhere/pull/7"]
+    finally:
+        gen_diff_data.run(desk.repo, "remote", "remove", "origin")
+        desk.github_answers(code=1, err="gh: Not Found (HTTP 404)")
+        desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})
+
+
 def test_the_source_panel_lists_what_can_be_reviewed(page):
     page.locator("#source > summary").click()
     page.wait_for_selector("#srcrefs label")

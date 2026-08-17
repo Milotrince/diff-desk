@@ -122,6 +122,10 @@
     cursor: pointer;
   }
   .tab[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+  /* Shown only on the tab already chosen, where a click opens the pull request rather than selecting it again. */
+  .tab .away { margin-left: 5px; font-size: 10px; color: var(--faint); opacity: 0; }
+  .tab[aria-selected="true"] .away { opacity: 1; }
+  .tab[aria-selected="true"]:hover .away { color: var(--accent); }
 
   select, .toggle, .search input {
     font: inherit;
@@ -1545,12 +1549,25 @@
   function renderTabs() {
     els.tabs.innerHTML = "";
     data.branches.forEach((entry, index) => {
+      const request = entry.pr;
       const tab = document.createElement("button");
       tab.className = "tab";
       tab.setAttribute("role", "tab");
       tab.textContent = entry.blurb;
       tab.setAttribute("aria-selected", String(index === state.branch));
+      if (request) {
+        tab.title = `${request.title}\n${request.url}`;
+        const away = document.createElement("span");
+        away.className = "away";
+        away.textContent = "\u2197";
+        tab.append(away);
+      }
+      // Selecting comes first, since that is what a tab is for; once selected, the same click opens the pull request.
       tab.addEventListener("click", () => {
+        if (request && index === state.branch) {
+          window.open(request.url, "_blank", "noreferrer");
+          return;
+        }
         state.branch = index;
         state.scope = "all";
         [...els.tabs.children].forEach((node, i) => node.setAttribute("aria-selected", String(i === index)));
