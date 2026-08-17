@@ -1,0 +1,66 @@
+---
+name: diff-desk
+description: Serve a local git branch as a browser diff review page, collect the line comments the user leaves on it, and work through them. Use when the user wants to review a branch, diff or pull request locally, when GitHub is unreachable, or when they refer to comments they left in the review tool.
+---
+
+# Diff desk
+
+A local review page for any git range: side-by-side line numbers, per-commit or whole-branch scope, reviewed-file
+tracking, range comments dragged over any lines, and an optional batch post to the branch's pull request. Needs `git`,
+`gh` and python3 only. The page is served on `http://127.0.0.1:8787/`; its payload, page and comments live in
+`~/.claude/diff-desk/` (override with `DIFF_DESK_HOME`).
+
+## Serving a review
+
+Run in the background, then give the user the URL:
+
+    python3 ~/.claude/skills/diff-desk/desk.py serve --dir <repo> --base <ref> [refs ...]
+
+Omit `refs` to offer every local branch ahead of the base. `--base` defaults to `upstream/main`. The checked-out
+branch is shown with its uncommitted work included. Re-running while a desk is already up just rebuilds the page.
+The user can also switch repository, base and branches from the page's own Source panel.
+
+## Picking up the comments
+
+The user writes comments on the page and presses "Submit review", which sends the whole batch at once. To wait for
+one, run in the background - it blocks until a batch lands, prints it, and exits:
+
+    python3 ~/.claude/skills/diff-desk/desk.py watch
+
+Each comment prints as `[seq] branch path:line-endLine (side) text`. Address them, then mark them done so the page
+shows them closed:
+
+    python3 ~/.claude/skills/diff-desk/desk.py resolve 3 4 --answer "fixed in abc1234"
+
+`desk.py comments [--all]` lists what is outstanding. Start a fresh `watch` after each batch; it resumes from the
+current end unless given `--since N`.
+
+## Behaviour to know
+
+- A comment range may cover removed and added lines together. It is anchored to the added side when the range touches
+  it, so `side`/`line`/`endLine` are always expressible as a GitHub line range.
+- Reviewed-file ticks are remembered per branch and per file digest, so a file whose diff changes reopens by itself.
+- Gap expanders on each hunk header read the file at the branch revision, so context beyond the diff needs the desk
+  running (they are hidden otherwise).
+- Comments are recorded whether or not GitHub is reachable; posting to a pull request is a separate opt-in tick.
+
+## Changing the page
+
+`diff_desk_template.html` holds the page, with `__DIFF_DATA__` and `__BUILD__` substituted at build time. After
+editing it, verify with the harness rather than by inspection - it drives the real page in Chrome, WebKit and Firefox
+and asserts the drag, mixed ranges, gap expansion and the single-click paths:
+
+    python3 ~/.claude/skills/diff-desk/drag_probe.py
+    python3 ~/.claude/skills/diff-desk/sticky_probe.py
+
+Pointer behaviour differs between engines, so a change to selection or hit testing is not done until both pass in all
+three. `sticky_probe.py` covers layout instead: that the pinned file head clears the page header at three widths, and
+that filling a gap leaves no delimiter behind. The header carries a build stamp; if the user reports stale behaviour,
+have them compare it first.
+
+Two traps these harnesses exist to catch, both of which shipped broken before they did:
+
+- An `overflow` on the file card makes the card its own scrollport, so its head never pins and the hunk delimiter is
+  what stands at the top of the view, reading as the file's name.
+- A trailing click follows every drag, aimed at the pin or at an ancestor depending on the engine, and collapses the
+  range to one line unless it is swallowed.

@@ -1,0 +1,149 @@
+"""One entry point for the diff desk: serve a branch for review, then pick up the comments it collects.
+
+desk.py serve --dir <repo> --base <ref> [refs ...]   collect the diffs and serve them (blocks)
+desk.py watch [--since N]                            block until a review batch is submitted, then print it
+desk.py comments [--all]                             what has been submitted, unresolved unless --all
+desk.py resolve 3 4 --answer "fixed in abc1234"      mark comments addressed, which the page then shows
+desk.py refs --dir <repo> --base <ref>               the branches ahead of a base
+"""
+
+import argparse
+import json
+import pathlib
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+import gen_diff_data
+import serve_diff
+
+HERE = pathlib.Path(__file__).parent
+URL = f"http://127.0.0.1:{serve_diff.PORT}"
+
+
+def ask(route, payload=None):
+    """One request to the running desk, or None when nothing is serving."""
+    request = urllib.request.Request(
+        f"{URL}{route}",
+        data=json.dumps(payload).encode() if payload is not None else None,
+        headers={"Content-Type": "application/json"},
+        method="POST" if payload is not None else "GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as answer:
+            return json.loads(answer.read() or b"null")
+    except (urllib.error.URLError, OSError):
+        return None
+
+
+def span(note):
+    end = note.get("endLine")
+    return f"{note['line']}-{end}" if end and end != note["line"] else str(note["line"])
+
+
+def show(note):
+    text = " ".join(str(note.get("text", "")).split())
+    print(f"[{note['seq']}] {note.get('branch', '?')} {note['path']}:{span(note)} ({note.get('side')}) {text}")
+
+
+def serve(args):
+    payload = gen_diff_data.collect(args.dir, args.base, args.refs)
+    if not payload["branches"]:
+        sys.exit(f"nothing ahead of {args.base} in {args.dir}")
+    home = gen_diff_data.home()
+    (home / "diff_data.json").write_text(json.dumps(payload, separators=(",", ":")))
+    template = (HERE / "diff_desk_template.html").read_text()
+    (home / "diff_desk.html").write_text(gen_diff_data.render_page(template, payload))
+    files = sum(len(entry["files"]) for entry in payload["branches"])
+    print(f"{files} file diffs across {len(payload['branches'])} branch(es), base {payload['base']}")
+    for entry in payload["branches"]:
+        request = entry["pr"]
+        print(f"  {entry['ref']}: {len(entry['files'])} files{f' -> PR #{request['number']}' if request else ''}")
+    if ask("/data") is not None:
+        print(f"already serving, page rebuilt: {URL}")
+        return
+    serve_diff.main()
+
+
+def watch(args):
+    """Block until the page submits a batch, then print it. This is how a session picks up a review."""
+    if ask("/data") is None:
+        sys.exit("nothing is serving; start with 'desk.py serve' first")
+    sent = ask("/comments") or []
+    since = args.since if args.since is not None else max((row["seq"] for row in sent), default=0)
+    print(f"watching for comments past seq {since}", flush=True)
+    deadline = time.monotonic() + args.timeout if args.timeout else None
+    while deadline is None or time.monotonic() < deadline:
+        fresh = [row for row in (ask(f"/comments?since={since}") or []) if row.get("state") == "open"]
+        if fresh:
+            print(f"{len(fresh)} comment(s) submitted:", flush=True)
+            for note in fresh:
+                show(note)
+            return
+        time.sleep(args.every)
+    print("nothing submitted within the timeout")
+
+
+def comments(args):
+    rows = ask("/comments")
+    if rows is None:
+        sys.exit("nothing is serving")
+    rows = rows if args.all else [row for row in rows if row.get("state") == "open"]
+    print(f"{len(rows)} comment(s){'' if args.all else ' unresolved'}")
+    for note in rows:
+        show(note)
+
+
+def resolve(args):
+    outcome = ask("/resolve", {"seq": args.seq, "answer": args.answer})
+    if outcome is None:
+        sys.exit("nothing is serving")
+    print(f"marked {outcome['resolved']} comment(s) addressed")
+
+
+def refs(args):
+    where = f"/refs?dir={urllib.parse.quote(args.dir)}&base={urllib.parse.quote(args.base)}"
+    info = ask(where) or {
+        "current": gen_diff_data.run(args.dir, "rev-parse", "--abbrev-ref", "HEAD").strip(),
+        "upstream": gen_diff_data.canonical_repo(args.dir),
+        "refs": gen_diff_data.ahead_refs(args.dir, args.base),
+    }
+    print(f"{args.dir} on {info['current']}, upstream {info['upstream'] or '(none)'}")
+    for row in info["refs"]:
+        print(f"  {row['ref']}  {row['ahead']} commit(s) ahead of {args.base}")
+
+
+parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+jobs = parser.add_subparsers(dest="job", required=True)
+
+job = jobs.add_parser("serve", help="collect the diffs and serve the review page")
+job.add_argument("refs", nargs="*", help="refs to review; every branch ahead of the base when omitted")
+job.add_argument("--dir", default=".", help="the repository to read")
+job.add_argument("--base", default="upstream/main", help="the ref to diff against")
+job.set_defaults(run=serve)
+
+job = jobs.add_parser("watch", help="block until a review batch is submitted")
+job.add_argument("--since", type=int, default=None, help="cursor to resume from; the current end by default")
+job.add_argument("--every", type=float, default=10.0, help="seconds between polls")
+job.add_argument("--timeout", type=float, default=0.0, help="give up after this many seconds; 0 waits forever")
+job.set_defaults(run=watch)
+
+job = jobs.add_parser("comments", help="what has been submitted")
+job.add_argument("--all", action="store_true", help="include the ones already addressed")
+job.set_defaults(run=comments)
+
+job = jobs.add_parser("resolve", help="mark comments addressed")
+job.add_argument("seq", nargs="+", type=int)
+job.add_argument("--answer", default="", help="a short note shown next to the comment on the page")
+job.set_defaults(run=resolve)
+
+job = jobs.add_parser("refs", help="the branches ahead of a base")
+job.add_argument("--dir", default=".")
+job.add_argument("--base", default="upstream/main")
+job.set_defaults(run=refs)
+
+if __name__ == "__main__":
+    known = parser.parse_args()
+    known.run(known)

@@ -1,0 +1,1347 @@
+<title>Genesis Diff Desk</title>
+<style>
+  :root {
+    --ground: #f6f7f9;
+    --surface: #ffffff;
+    --surface-sunk: #f0f2f6;
+    --ink: #151a21;
+    --muted: #5c6675;
+    --faint: #8a94a4;
+    --rule: #e2e6ec;
+    --rule-strong: #cdd4de;
+    --accent: #2f5aa8;
+    --accent-soft: #e6ecf8;
+    --add-ink: #17614a;
+    --add-bg: #e8f3ed;
+    --add-gutter: #bfe0cf;
+    --del-ink: #8e3628;
+    --del-bg: #faeae6;
+    --del-gutter: #f0c6bb;
+    --stale: #8a5a12;
+    --stale-bg: #fbf1de;
+    --shadow: 0 1px 2px rgba(21, 26, 33, 0.06), 0 8px 24px -16px rgba(21, 26, 33, 0.24);
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #11141a;
+      --surface: #171b23;
+      --surface-sunk: #1d222b;
+      --ink: #e7eaf0;
+      --muted: #949eaf;
+      --faint: #6d7787;
+      --rule: #262c36;
+      --rule-strong: #333b47;
+      --accent: #93aeec;
+      --accent-soft: #1b2536;
+      --add-ink: #79cfa4;
+      --add-bg: #15271e;
+      --add-gutter: #2c5340;
+      --del-ink: #e49c8c;
+      --del-bg: #291916;
+      --del-gutter: #5c332a;
+      --stale: #e0b567;
+      --stale-bg: #2a2113;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -16px rgba(0, 0, 0, 0.7);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #11141a;
+    --surface: #171b23;
+    --surface-sunk: #1d222b;
+    --ink: #e7eaf0;
+    --muted: #949eaf;
+    --faint: #6d7787;
+    --rule: #262c36;
+    --rule-strong: #333b47;
+    --accent: #93aeec;
+    --accent-soft: #1b2536;
+    --add-ink: #79cfa4;
+    --add-bg: #15271e;
+    --add-gutter: #2c5340;
+    --del-ink: #e49c8c;
+    --del-bg: #291916;
+    --del-gutter: #5c332a;
+    --stale: #e0b567;
+    --stale-bg: #2a2113;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -16px rgba(0, 0, 0, 0.7);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .label { font-size: 10px; font-weight: 650; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
+  .num { font-variant-numeric: tabular-nums; }
+  .status { font-size: 11.5px; color: var(--muted); }
+
+  /* Measured from the header itself at runtime: it wraps at narrow widths, so no fixed value can be right. */
+  :root { --head: 58px; }
+  .status b { color: var(--add-ink); font-weight: 600; }
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    padding: 12px 20px;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+  .brand .base { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+  .tabs { display: flex; gap: 2px; padding: 2px; background: var(--surface-sunk); border-radius: 7px; }
+  .tab {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .tab[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+
+  select, .toggle, .search input {
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 6px;
+    padding: 6px 9px;
+  }
+  select { max-width: 44ch; }
+  .search { position: relative; display: flex; align-items: center; }
+  .search input { width: 20ch; padding-left: 26px; }
+  .search svg { position: absolute; left: 8px; width: 13px; height: 13px; color: var(--faint); }
+  .toggle { cursor: pointer; }
+  .toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  select:focus-visible, .toggle:focus-visible, input:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .totals { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 12px; }
+  .totals .plus { color: var(--add-ink); }
+  .totals .minus { color: var(--del-ink); }
+
+  .progress { display: flex; align-items: center; gap: 7px; }
+  .progress .track { width: 74px; height: 5px; border-radius: 3px; background: var(--rule); overflow: hidden; }
+  .progress .track i { display: block; height: 100%; background: var(--add-ink); }
+
+  .shell { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); align-items: start; }
+  @media (max-width: 900px) { .shell { grid-template-columns: minmax(0, 1fr); } }
+
+  aside {
+    position: sticky;
+    top: var(--head);
+    max-height: calc(100vh - var(--head));
+    overflow-y: auto;
+    padding: 14px 10px 40px 16px;
+    border-right: 1px solid var(--rule);
+  }
+  @media (max-width: 900px) { aside { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--rule); } }
+
+  aside h2 { margin: 0 0 8px 4px; }
+  .filelist { display: flex; flex-direction: column; gap: 1px; }
+
+  .fileitem {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .fileitem:hover { background: var(--surface-sunk); }
+  .fileitem[data-current="true"] { background: var(--accent-soft); }
+  .fileitem[data-done="true"] .name { color: var(--faint); text-decoration: line-through; }
+  .fileitem .name { font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .fileitem .stat { display: flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .tick { width: 12px; height: 12px; color: var(--add-ink); flex: none; opacity: 0; }
+  .fileitem[data-done="true"] .tick { opacity: 1; }
+
+  .bar { display: flex; width: 32px; height: 5px; border-radius: 3px; overflow: hidden; background: var(--rule); }
+  .bar i { display: block; height: 100%; }
+  .bar .a { background: var(--add-gutter); }
+  .bar .d { background: var(--del-gutter); }
+
+  main { padding: 16px 20px 60vh; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+  .commitnote {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+  }
+  .commitnote .sha { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .commitnote .subject { font-weight: 600; }
+
+  .file { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; scroll-margin-top: calc(var(--head) + 6px); }
+  .file[data-done="true"] { opacity: 0.72; }
+  body.hide-done .file[data-done="true"] { display: none; }
+
+  .filehead {
+    position: sticky;
+    top: var(--head);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--rule);
+    border-radius: 7px 7px 0 0;
+    background: var(--surface);
+  }
+  .filehead .grow {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .filehead .grow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .filehead .path { font-family: var(--mono); font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+  .counts { display: flex; gap: 8px; font-family: var(--mono); font-size: 11.5px; }
+  .counts .plus { color: var(--add-ink); }
+  .counts .minus { color: var(--del-ink); }
+  .chev { width: 12px; height: 12px; color: var(--faint); flex: none; transition: transform 0.12s ease; }
+  .file[data-open="false"] .chev { transform: rotate(-90deg); }
+  .file[data-open="false"] .body { display: none; }
+
+  .seen { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); cursor: pointer; user-select: none; white-space: nowrap; }
+  .seen input { accent-color: var(--add-ink); width: 14px; height: 14px; }
+
+  .chip { font-size: 10px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: var(--surface-sunk); color: var(--muted); }
+  .chip.added { background: var(--add-bg); color: var(--add-ink); }
+  .chip.deleted { background: var(--del-bg); color: var(--del-ink); }
+  .chip.stale { background: var(--stale-bg); color: var(--stale); }
+
+  .body { overflow-x: auto; border-radius: 0 0 7px 7px; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  td { padding: 0 0 0 6px; vertical-align: top; white-space: pre; }
+  td.ln {
+    user-select: none;
+    width: 1%;
+    padding: 0 8px;
+    text-align: right;
+    color: var(--faint);
+    background: var(--surface-sunk);
+    user-select: none;
+    font-variant-numeric: tabular-nums;
+    border-right: 1px solid var(--rule);
+    cursor: pointer;
+  }
+  td.mark { width: 1%; padding: 0 4px 0 6px; color: var(--faint); user-select: none; }
+  td.gut { width: 21px; min-width: 21px; padding: 0 3px; user-select: none; }
+  tr.a td.code, tr.a td.mark { background: var(--add-bg); color: var(--add-ink); }
+  tr.a td.ln { background: color-mix(in srgb, var(--add-bg) 70%, var(--surface-sunk)); }
+  tr.d td.code, tr.d td.mark { background: var(--del-bg); color: var(--del-ink); }
+  tr.d td.ln { background: color-mix(in srgb, var(--del-bg) 70%, var(--surface-sunk)); }
+  tr.h td { background: var(--surface-sunk); color: var(--muted); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: 3px 8px; }
+  tr.sel td {
+    background-image: linear-gradient(
+      color-mix(in srgb, var(--accent) 13%, transparent),
+      color-mix(in srgb, var(--accent) 13%, transparent)
+    );
+  }
+  tr.sel td.ln:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+  body.hide-context tr.c { display: none; }
+  body.dragging { user-select: none; cursor: ns-resize; }
+
+  /* The affordance is always in the layout, so revealing it cannot shift the code sideways. */
+  .pin {
+    width: 15px;
+    height: 15px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: var(--accent);
+    color: var(--surface);
+    font: inherit;
+    font-size: 11px;
+    line-height: 15px;
+    text-align: center;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.08s ease;
+  }
+  tr:hover .pin, .pin.held { opacity: 1; pointer-events: auto; }
+  .pin:focus-visible { opacity: 1; pointer-events: auto; outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .noterow td { padding: 0; background: var(--surface-sunk); }
+  .notebox { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-left: 3px solid var(--accent); }
+  .notebox textarea, .tray textarea {
+    font: inherit;
+    font-family: var(--sans);
+    font-size: 12.5px;
+    min-height: 52px;
+    padding: 7px 8px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 6px;
+    resize: vertical;
+  }
+  .notebox .row { display: flex; align-items: center; gap: 8px; }
+  button.solid, button.ghost {
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: var(--accent);
+    color: var(--surface);
+    cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--muted); border-color: var(--rule-strong); }
+
+  .note { display: flex; gap: 8px; padding: 7px 10px; background: var(--accent-soft); border-left: 3px solid var(--accent); font-family: var(--sans); font-size: 12.5px; white-space: normal; }
+  .note.draft { background: transparent; border-left-style: dashed; }
+  .note .who { font-family: var(--mono); font-size: 11px; color: var(--muted); flex: none; }
+  .note.draft .who { color: var(--accent); }
+  .note.done { background: var(--add-bg); border-left-color: var(--add-gutter); color: var(--muted); }
+  .note.done .who { color: var(--add-ink); }
+  .note .answer { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--add-ink); }
+  .note .drop { margin-left: auto; border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+
+  .tray {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 40;
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    width: min(370px, calc(100vw - 40px));
+    padding: 12px;
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+  .tray[data-open="true"] { display: flex; }
+  .tray .head { display: flex; align-items: center; gap: 8px; }
+  .tray .head strong { font-size: 13px; }
+  .tray ol { margin: 0; padding-left: 18px; max-height: 170px; overflow-y: auto; font-size: 12px; color: var(--muted); }
+  .tray li { margin-bottom: 3px; }
+  .tray li b { color: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 600; }
+  .tray .actions { display: flex; gap: 8px; }
+
+  .source { position: relative; flex: none; }
+  .source > summary {
+    list-style: none;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 5px 11px;
+    color: var(--muted);
+    border: 1px solid var(--rule-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    cursor: pointer;
+  }
+  .source > summary::-webkit-details-marker { display: none; }
+  .source[open] > summary { color: var(--accent); border-color: var(--accent); }
+  .source > .body {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 340px;
+    padding: 12px;
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+  .source label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+  #srcfilter { font-family: var(--sans) !important; }
+  .source input[type="text"] {
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 8px;
+    color: var(--ink);
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule-strong);
+    border-radius: 6px;
+  }
+  .source .refs { display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow-y: auto; }
+  .source .refs label { flex-direction: row; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .source .refs .ahead { margin-left: auto; color: var(--faint); font-size: 11px; }
+  .source .row { display: flex; align-items: center; gap: 8px; }
+
+  .stamp { color: var(--faint); }
+
+  button.expand {
+    font: inherit;
+    font-family: var(--sans);
+    font-size: 10.5px;
+    font-weight: 600;
+    margin-right: 6px;
+    padding: 1px 7px;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  button.expand:hover { color: var(--accent); border-color: var(--accent); }
+  tr.h .at { color: var(--faint); }
+
+  .empty { padding: 40px 8px; color: var(--muted); text-align: center; }
+  kbd { font-family: var(--mono); font-size: 10.5px; padding: 1px 5px; border: 1px solid var(--rule-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--surface); color: var(--muted); }
+  .hint { padding: 8px 4px 10px; color: var(--faint); font-size: 11px; line-height: 1.8; }
+</style>
+
+<header>
+  <div class="brand">
+    <h1>Diff Desk</h1>
+    <span class="base"><span id="repo"></span> · base <span id="base"></span> · <span class="stamp">__BUILD__</span></span>
+  </div>
+  <details class="source" id="source">
+    <summary title="Choose the repository, the base and the branches to review">Source</summary>
+    <div class="body">
+      <label>Repository<input id="srcdir" type="text" spellcheck="false" placeholder="/path/to/checkout" /></label>
+      <label>Base<input id="srcbase" type="text" spellcheck="false" placeholder="upstream/main" /></label>
+      <input id="srcfilter" type="text" spellcheck="false" placeholder="Filter branches" />
+      <div class="refs" id="srcrefs"></div>
+      <div class="row">
+        <button class="solid" id="srcscan">Rescan</button>
+        <span class="status" id="srcstatus"></span>
+      </div>
+    </div>
+  </details>
+  <div class="tabs" id="tabs" role="tablist" aria-label="Branch"></div>
+  <select id="scope" aria-label="Commit"></select>
+  <label class="search">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 14 14"/></svg>
+    <input id="q" type="search" placeholder="Filter paths" aria-label="Filter paths" />
+  </label>
+  <button class="toggle" id="ctx" aria-pressed="false" title="Show only added and removed lines">Changes only</button>
+  <button class="toggle" id="hidedone" aria-pressed="false" title="Hide the files marked reviewed">Hide reviewed</button>
+  <div class="progress" title="Files marked reviewed">
+    <span class="track"><i id="pfill" style="width:0%"></i></span>
+    <span class="label num" id="ptext"></span>
+  </div>
+  <div class="totals">
+    <span class="plus num" id="tplus"></span>
+    <span class="minus num" id="tminus"></span>
+  </div>
+  <span class="status" id="status"></span>
+</header>
+
+<div class="tray" id="tray" data-open="false">
+  <div class="head"><strong id="traycount"></strong><span class="status">not sent yet</span></div>
+  <ol id="traylist"></ol>
+  <textarea id="traynote" placeholder="Overall note (optional)"></textarea>
+  <label class="seen" id="tograb" hidden><input type="checkbox" id="togh" /><span id="ghlabel"></span></label>
+  <div class="actions">
+    <button class="solid" id="traysend">Submit review</button>
+    <button class="ghost" id="traydrop">Discard</button>
+  </div>
+  <span class="status" id="trayresult"></span>
+</div>
+
+<div class="shell">
+  <aside>
+    <h2 class="label">Files</h2>
+    <div class="filelist" id="filelist"></div>
+    <div class="hint">
+      <kbd>j</kbd><kbd>k</kbd> files · <kbd>/</kbd> filter<br />
+      drag the <b>+</b> across lines to select a range<br />
+      <kbd>c</kbd> comment · <kbd>r</kbd> mark reviewed
+    </div>
+  </aside>
+  <main id="main"></main>
+</div>
+
+<script id="data" type="application/json">__DIFF_DATA__</script>
+<script>
+  let data = JSON.parse(document.getElementById("data").textContent);
+  const state = { branch: 0, scope: "all", query: "", current: 0 };
+  const notes = { sent: [], drafts: [], live: false };
+  // A selection is a span of rendered rows, held as the row order within the file rather than as line numbers on one
+  // side, which is what lets one range cover removed and added lines together.
+  const sel = { path: null, from: null, to: null };
+  let seen = {};
+
+  const els = {};
+  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcscan", "srcstatus"]) {
+    els[id] = document.getElementById(id);
+  }
+
+  function showSource() {
+    els.repo.textContent = data.name || "";
+    els.base.textContent = data.base;
+    els.srcdir.value = data.root || "";
+    els.srcbase.value = data.baseRef || "upstream/main";
+  }
+
+  const branch = () => data.branches[state.branch];
+  const stamp = () => new Date().toISOString();
+  const key = (path) => `${branch().ref} ${path}`;
+
+  /* ---------- reviewed state, remembered and invalidated by digest ---------- */
+
+  function loadSeen() {
+    try {
+      seen = JSON.parse(localStorage.getItem("diffdesk.seen") || "{}");
+    } catch (error) {
+      seen = {};
+    }
+  }
+
+  function saveSeen() {
+    localStorage.setItem("diffdesk.seen", JSON.stringify(seen));
+  }
+
+  function seenState(file) {
+    const mark = seen[key(file.path)];
+    if (!mark) return "open";
+    return mark === file.digest ? "done" : "stale";
+  }
+
+  function setSeen(file, done) {
+    if (done) seen[key(file.path)] = file.digest;
+    else delete seen[key(file.path)];
+    saveSeen();
+  }
+
+  function dropStale(files) {
+    let dropped = 0;
+    for (const file of files) {
+      if (seenState(file) === "stale") {
+        delete seen[key(file.path)];
+        dropped += 1;
+      }
+    }
+    if (dropped) saveSeen();
+    return dropped;
+  }
+
+  /* ---------- comments ---------- */
+
+  async function loadNotes() {
+    try {
+      const response = await fetch("comments", { cache: "no-store" });
+      if (!response.ok) throw new Error("no endpoint");
+      notes.sent = await response.json();
+      notes.live = true;
+    } catch (error) {
+      notes.live = false;
+      try {
+        notes.sent = JSON.parse(localStorage.getItem("diffdesk.notes") || "[]");
+      } catch (parseError) {
+        notes.sent = [];
+      }
+    }
+  }
+
+  function showStatus(staleCount) {
+    const where = notes.live ? "watched by Claude" : "kept in this browser";
+    const bits = [];
+    const closed = notes.sent.filter((note) => note.state === "resolved").length;
+    if (notes.sent.length) bits.push(`<b>${notes.sent.length}</b> sent${closed ? `, ${closed} addressed` : ""}`);
+    bits.push(where);
+    if (staleCount) bits.push(`${staleCount} reopened`);
+    els.status.innerHTML = bits.join(" · ");
+  }
+
+  const span = (note) => (note.endLine && note.endLine !== note.line ? `L${note.line}–${note.endLine}` : `L${note.line}`);
+
+  function drawTray() {
+    const request = branch().pr;
+    els.tograb.hidden = !(request && notes.live);
+    els.ghlabel.textContent = request ? `Also post to PR #${request.number}` : "";
+    els.tray.dataset.open = String(notes.drafts.length > 0);
+    els.traycount.textContent = `${notes.drafts.length} comment${notes.drafts.length === 1 ? "" : "s"} pending`;
+    els.traylist.innerHTML = "";
+    notes.drafts.forEach((draft, index) => {
+      const item = document.createElement("li");
+      const where = document.createElement("b");
+      where.textContent = `${draft.path.split("/").pop()} ${span(draft)}`;
+      item.append(where, document.createTextNode(` — ${draft.text.split("\n")[0].slice(0, 56)}`));
+      els.traylist.append(item);
+    });
+  }
+
+  async function submitReview() {
+    if (!notes.drafts.length) return;
+    const summary = els.traynote.value.trim();
+    const batch = [...notes.drafts];
+    if (summary) batch.push({ branch: branch().ref, path: "(review)", line: 0, side: "new", text: summary, at: stamp() });
+    if (notes.live) {
+      try {
+        await fetch("comments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(batch) });
+      } catch (error) {
+        notes.live = false;
+      }
+    }
+    if (els.togh.checked && branch().pr && notes.live) {
+      els.trayresult.textContent = `Posting ${batch.length} to PR #${branch().pr.number}…`;
+      try {
+        const response = await fetch("publish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: data.upstream, pr: branch().pr.number, summary, comments: notes.drafts }),
+        });
+        const outcome = await response.json();
+        els.trayresult.textContent = outcome.ok ? `Posted to PR #${branch().pr.number}` : `GitHub refused: ${outcome.error}`;
+      } catch (error) {
+        els.trayresult.textContent = `Could not reach GitHub: ${error.message}`;
+      }
+    }
+    notes.sent.push(...batch);
+    if (!notes.live) localStorage.setItem("diffdesk.notes", JSON.stringify(notes.sent));
+    notes.drafts = [];
+    els.traynote.value = "";
+    drawTray();
+    render();
+  }
+
+  function notesAt(path, line, side) {
+    const hit = (note) => note.branch === branch().ref && note.path === path && note.side === side && (note.endLine || note.line) === line;
+    return [...notes.sent.filter(hit), ...notes.drafts.filter(hit).map((draft) => ({ ...draft, pending: true }))];
+  }
+
+  function noteRow(note) {
+    const row = document.createElement("tr");
+    row.className = "noterow";
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    const box = document.createElement("div");
+    box.className = note.pending ? "note draft" : note.state === "resolved" ? "note done" : "note";
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = note.pending ? `${span(note)} pending` : note.state === "resolved" ? `${span(note)} done` : span(note);
+    const text = document.createElement("span");
+    text.textContent = note.text;
+    box.append(who, text);
+    if (note.answer) {
+      const answer = document.createElement("span");
+      answer.className = "answer";
+      answer.textContent = note.answer;
+      box.append(answer);
+    }
+    if (note.pending) {
+      const drop = document.createElement("button");
+      drop.className = "drop";
+      drop.title = "Remove this comment";
+      drop.textContent = "×";
+      drop.addEventListener("click", () => {
+        notes.drafts = notes.drafts.filter((draft) => draft !== note.source);
+        drawTray();
+        render();
+      });
+      box.append(drop);
+    }
+    cell.append(box);
+    row.append(cell);
+    return row;
+  }
+
+  /* ---------- line selection ---------- */
+
+  function clearSel() {
+    sel.path = sel.from = sel.to = null;
+    document.querySelectorAll("tr.sel").forEach((row) => row.classList.remove("sel"));
+  }
+
+  function selRows() {
+    if (sel.path === null) return [];
+    const low = Math.min(sel.from, sel.to);
+    const high = Math.max(sel.from, sel.to);
+    return [...document.querySelectorAll(`tr[data-path="${CSS.escape(sel.path)}"][data-seq]`)].filter((row) => {
+      const seq = Number(row.dataset.seq);
+      return seq >= low && seq <= high;
+    });
+  }
+
+  function paintSel() {
+    document.querySelectorAll("tr.sel").forEach((row) => row.classList.remove("sel"));
+    for (const row of selRows()) row.classList.add("sel");
+  }
+
+  function pick(row, extend) {
+    const { path } = row.dataset;
+    const seq = Number(row.dataset.seq);
+    if (extend && sel.path === path) sel.to = seq;
+    else Object.assign(sel, { path, from: seq, to: seq });
+    paintSel();
+  }
+
+  // Dragging over lines selects the range covered, and letting go opens the comment box on it. The row under the
+  // pointer is found by position instead of by event target: once a press has begun a text selection, browsers stop
+  // retargeting hover events to the elements passing underneath, so a target-based drag never leaves its first line.
+  const drag = { on: false, armed: null, ranged: false };
+
+  function rowAt(x, y) {
+    const node = document.elementFromPoint(x, y);
+    return node && node.closest ? node.closest("tr[data-line]") : null;
+  }
+
+  function startDrag(row) {
+    drag.on = true;
+    drag.armed = null;
+    drag.ranged = false;
+    pick(row, false);
+    document.body.classList.add("dragging");
+  }
+
+  function endDrag() {
+    drag.armed = null;
+    document.querySelectorAll(".pin.held").forEach((pin) => pin.classList.remove("held"));
+    if (!drag.on) return;
+    drag.on = false;
+    document.body.classList.remove("dragging");
+    if (sel.path !== null && sel.from !== sel.to) composeSel();
+  }
+
+  function overDrag(x, y) {
+    if (!drag.on && drag.armed === null) return;
+    const row = rowAt(x, y);
+    if (!row) return;
+    if (!drag.on) {
+      if (row === drag.armed) return;
+      // The press started on code, so the text selection it began is dropped in favour of the range.
+      const text = window.getSelection();
+      if (text) text.removeAllRanges();
+      startDrag(drag.armed);
+    }
+    if (row.dataset.path !== sel.path) return;
+    const seq = Number(row.dataset.seq);
+    if (seq !== sel.to) drag.ranged = true;
+    sel.to = seq;
+    paintSel();
+  }
+
+  // Releasing after a drag leaves a click behind, aimed at the pin or at an ancestor depending on the engine. Left
+  // alone it reaches the line handlers and collapses the range to the single line the click landed on.
+  document.addEventListener(
+    "click",
+    (event) => {
+      if (!drag.ranged) return;
+      drag.ranged = false;
+      event.stopPropagation();
+      event.preventDefault();
+    },
+    true,
+  );
+
+  document.addEventListener("pointermove", (event) => overDrag(event.clientX, event.clientY));
+  document.addEventListener("pointerup", endDrag);
+  document.addEventListener("pointercancel", endDrag);
+  window.addEventListener("blur", endDrag);
+
+  // A line range is only expressible on one side, so a range touching added or unchanged lines is anchored there and
+  // the removed lines it covers ride along; a range of removed lines alone is anchored on the removed side.
+  function anchorSel() {
+    const rows = selRows();
+    if (!rows.length) return null;
+    const side = rows.some((row) => row.dataset.side === "new") ? "new" : "old";
+    const numbers = rows.filter((row) => row.dataset.side === side).map((row) => Number(row.dataset.line));
+    return { row: rows[rows.length - 1], side, line: Math.min(...numbers), endLine: Math.max(...numbers) };
+  }
+
+  function composeSel() {
+    const spot = anchorSel();
+    if (spot) openComposer(spot.row, sel.path, spot.line, spot.endLine, spot.side);
+  }
+
+  function openComposer(afterRow, path, line, endLine, side) {
+    if (afterRow.nextElementSibling && afterRow.nextElementSibling.dataset.composer === "true") return;
+    const row = document.createElement("tr");
+    row.className = "noterow";
+    row.dataset.composer = "true";
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    const box = document.createElement("div");
+    box.className = "notebox";
+    const field = document.createElement("textarea");
+    field.placeholder = `Comment on ${path.split("/").pop()}, ${endLine !== line ? `lines ${line}–${endLine}` : `line ${line}`}`;
+    const controls = document.createElement("div");
+    controls.className = "row";
+    const send = document.createElement("button");
+    send.className = "solid";
+    send.textContent = "Add to review";
+    const cancel = document.createElement("button");
+    cancel.className = "ghost";
+    cancel.textContent = "Cancel";
+    const hint = document.createElement("span");
+    hint.className = "status";
+    hint.textContent = "⌘/Ctrl + Enter";
+    controls.append(send, cancel, hint);
+    box.append(field, controls);
+    cell.append(box);
+    row.append(cell);
+    afterRow.after(row);
+    field.focus();
+
+    const commit = () => {
+      const text = field.value.trim();
+      if (!text) return;
+      notes.drafts.push({ branch: branch().ref, path, line, endLine, side, text, at: stamp() });
+      row.remove();
+      clearSel();
+      drawTray();
+      render();
+    };
+    send.addEventListener("click", commit);
+    cancel.addEventListener("click", () => {
+      row.remove();
+      clearSel();
+    });
+    field.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        commit();
+      }
+      if (event.key === "Escape") {
+        row.remove();
+        clearSel();
+      }
+    });
+  }
+
+  /* ---------- the lines a diff leaves out ---------- */
+
+  const CONTEXT_STEP = 20;
+
+  function fileRev(file) {
+    // A deleted file only exists on the base side; everything else is read from the branch under review.
+    const { commit } = view();
+    if (commit) return file.state === "deleted" ? `${commit.sha}^` : commit.sha;
+    return file.state === "deleted" ? data.baseRef : branch().rev;
+  }
+
+  async function readLines(file, from, to) {
+    const where = `lines?dir=${encodeURIComponent(data.root)}&rev=${encodeURIComponent(fileRev(file))}&path=${encodeURIComponent(file.path)}&from=${from}&to=${to}`;
+    try {
+      return await (await fetch(where, { cache: "no-store" })).json();
+    } catch (error) {
+      return { lines: [], total: 0 };
+    }
+  }
+
+  function redrawCard(file, index) {
+    const old = document.getElementById(`f${index}`);
+    if (!old) return;
+    const fresh = card(file, index);
+    fresh.dataset.open = old.dataset.open;
+    clearSel();
+    old.replaceWith(fresh);
+  }
+
+  const lastNumbered = (rows) => [...rows].reverse().find((row) => row[0] !== "h" && row[2] > 0);
+
+  async function fillGap(file, index, at, upward, whole) {
+    const head = file.lines[at];
+    const above = lastNumbered(file.lines.slice(0, at));
+    const previous = above ? above[2] : 0;
+    const room = head[2] - previous - 1;
+    const wanted = whole ? room : Math.min(CONTEXT_STEP, room);
+    if (wanted <= 0) return;
+    const from = upward ? head[2] - wanted : previous + 1;
+    const slice = await readLines(file, from, from + wanted - 1);
+    // Context lines advance both sides, so the offset between them holds across the whole gap.
+    const offset = head[1] - head[2];
+    const rows = slice.lines.map((text, step) => ["c", from + step + offset, from + step, text]);
+    file.lines.splice(upward ? at + 1 : at, 0, ...rows);
+    if (upward) {
+      head[1] -= rows.length;
+      head[2] -= rows.length;
+    }
+    redrawCard(file, index);
+  }
+
+  async function fillTail(file, index) {
+    const last = lastNumbered(file.lines);
+    if (!last) return;
+    const slice = await readLines(file, last[2] + 1, last[2] + CONTEXT_STEP);
+    if (!slice.lines.length) return;
+    const offset = last[1] - last[2];
+    file.lines.push(...slice.lines.map((text, step) => ["c", last[2] + 1 + step + offset, last[2] + 1 + step, text]));
+    redrawCard(file, index);
+  }
+
+  /* ---------- chrome ---------- */
+
+  function renderTabs() {
+    els.tabs.innerHTML = "";
+    data.branches.forEach((entry, index) => {
+      const tab = document.createElement("button");
+      tab.className = "tab";
+      tab.setAttribute("role", "tab");
+      tab.textContent = entry.blurb;
+      tab.setAttribute("aria-selected", String(index === state.branch));
+      tab.addEventListener("click", () => {
+        state.branch = index;
+        state.scope = "all";
+        [...els.tabs.children].forEach((node, i) => node.setAttribute("aria-selected", String(i === index)));
+        renderScopes();
+        render();
+      });
+      els.tabs.append(tab);
+    });
+  }
+
+  /* ---------- picking what to review ---------- */
+
+  const source = { refs: [], current: "", picked: new Set() };
+
+  async function loadRefs() {
+    els.srcstatus.textContent = "reading branches...";
+    const where = `refs?dir=${encodeURIComponent(els.srcdir.value)}&base=${encodeURIComponent(els.srcbase.value)}`;
+    try {
+      const info = await (await fetch(where, { cache: "no-store" })).json();
+      source.refs = info.refs;
+      source.current = info.current;
+      source.picked = new Set(data.branches.map((entry) => entry.ref));
+      drawRefs();
+      els.srcstatus.textContent = info.refs.length
+        ? `${info.refs.length} ahead of ${els.srcbase.value}${info.upstream ? ` \u00b7 ${info.upstream}` : ""}`
+        : `nothing ahead of ${els.srcbase.value}`;
+    } catch (error) {
+      source.refs = [];
+      els.srcrefs.innerHTML = "";
+      els.srcstatus.textContent = "needs the local server";
+    }
+  }
+
+  function drawRefs() {
+      const query = els.srcfilter.value.trim().toLowerCase();
+      // A branch already picked stays listed whatever the filter says, so a selection cannot be lost out of view.
+      const rows = source.refs.filter((row) => !query || row.ref.toLowerCase().includes(query) || source.picked.has(row.ref));
+      els.srcrefs.innerHTML = "";
+      for (const row of rows) {
+        const label = document.createElement("label");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.value = row.ref;
+        box.checked = source.picked.has(row.ref);
+        box.addEventListener("change", () => {
+          if (box.checked) source.picked.add(row.ref);
+          else source.picked.delete(row.ref);
+        });
+        const name = document.createElement("span");
+        name.textContent = row.ref === source.current ? `${row.ref} *` : row.ref;
+        const ahead = document.createElement("span");
+        ahead.className = "ahead";
+        ahead.textContent = `${row.ahead} commit${row.ahead === 1 ? "" : "s"}`;
+        label.append(box, name, ahead);
+        els.srcrefs.append(label);
+      }
+  }
+
+  async function rescan() {
+    const refs = [...source.picked];
+    els.srcstatus.textContent = "collecting diffs...";
+    try {
+      const outcome = await (
+        await fetch("scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dir: els.srcdir.value, base: els.srcbase.value, refs }),
+        })
+      ).json();
+      if (!outcome.ok) {
+        els.srcstatus.textContent = outcome.error;
+        return;
+      }
+      data = outcome.data;
+      Object.assign(state, { branch: 0, scope: "all", current: 0 });
+      clearSel();
+      showSource();
+      renderTabs();
+      renderScopes();
+      render();
+      els.srcstatus.textContent = `${data.branches.length} branch${data.branches.length === 1 ? "" : "es"} loaded`;
+      els.source.open = false;
+    } catch (error) {
+      els.srcstatus.textContent = `scan failed: ${error.message}`;
+    }
+  }
+
+  function renderScopes() {
+    els.scope.innerHTML = "";
+    const all = document.createElement("option");
+    all.value = "all";
+    all.textContent = `${branch().dirty ? "Working tree" : "All commits"} · ${branch().commits.length} commits`;
+    els.scope.append(all);
+    branch().commits.forEach((commit, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = `${commit.sha}  ${commit.subject}`;
+      els.scope.append(option);
+    });
+  }
+
+  const view = () => (state.scope === "all" ? { files: branch().files, commit: null } : { files: branch().commits[Number(state.scope)].files, commit: branch().commits[Number(state.scope)] });
+
+  function visible(files) {
+    const query = state.query.trim().toLowerCase();
+    return query ? files.filter((file) => file.path.toLowerCase().includes(query)) : files;
+  }
+
+  const chevron = '<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>';
+  const tickMark = '<svg class="tick" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 6.5 4.7 9 10 3.5"/></svg>';
+
+  function render() {
+    const { files, commit } = view();
+    const staleCount = dropStale(files);
+    const shown = visible(files);
+    const added = files.reduce((sum, file) => sum + file.added, 0);
+    const removed = files.reduce((sum, file) => sum + file.removed, 0);
+    const done = files.filter((file) => seenState(file) === "done").length;
+    els.tplus.textContent = `+${added.toLocaleString()}`;
+    els.tminus.textContent = `−${removed.toLocaleString()}`;
+    els.ptext.textContent = `${done}/${files.length} reviewed`;
+    els.pfill.style.width = files.length ? `${Math.round((done / files.length) * 100)}%` : "0%";
+    showStatus(staleCount);
+
+    els.filelist.innerHTML = "";
+    shown.forEach((file, index) => {
+      const item = document.createElement("button");
+      item.className = "fileitem";
+      item.dataset.done = String(seenState(file) === "done");
+      item.innerHTML = tickMark + `<span class="name"></span><span class="stat"><span class="bar"><i class="a" style="flex:${file.added}"></i><i class="d" style="flex:${file.removed}"></i></span><span class="num">${file.added + file.removed}</span></span>`;
+      const name = item.querySelector(".name");
+      name.textContent = file.path;
+      name.title = file.path;
+      item.addEventListener("click", () => jump(index));
+      els.filelist.append(item);
+    });
+
+    els.main.innerHTML = "";
+    if (commit) {
+      const note = document.createElement("div");
+      note.className = "commitnote";
+      note.innerHTML = '<span class="sha"></span><span class="subject"></span>';
+      note.querySelector(".sha").textContent = commit.sha;
+      note.querySelector(".subject").textContent = commit.subject;
+      els.main.append(note);
+    }
+    if (!shown.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = state.query ? `No file matches “${state.query}”.` : "No changes in this view.";
+      els.main.append(empty);
+      return;
+    }
+    shown.forEach((file, index) => els.main.append(card(file, index)));
+    markCurrent();
+    paintSel();
+  }
+
+  function card(file, index) {
+    const status = seenState(file);
+    const wrap = document.createElement("section");
+    wrap.className = "file";
+    wrap.dataset.open = String(status !== "done");
+    wrap.dataset.done = String(status === "done");
+    wrap.id = `f${index}`;
+
+    const head = document.createElement("div");
+    head.className = "filehead";
+
+    const grow = document.createElement("button");
+    grow.className = "grow";
+    grow.innerHTML = chevron + '<span class="path"></span>';
+    grow.querySelector(".path").textContent = file.path;
+    if (file.state) {
+      const chip = document.createElement("span");
+      chip.className = `chip ${file.state}`;
+      chip.textContent = file.state;
+      grow.append(chip);
+    }
+    if (status === "stale") {
+      const chip = document.createElement("span");
+      chip.className = "chip stale";
+      chip.textContent = "changed since review";
+      grow.append(chip);
+    }
+    grow.addEventListener("click", () => {
+      wrap.dataset.open = wrap.dataset.open === "true" ? "false" : "true";
+    });
+
+    const counts = document.createElement("span");
+    counts.className = "counts";
+    counts.innerHTML = `<span class="plus num">+${file.added}</span><span class="minus num">−${file.removed}</span>`;
+
+    const seenLabel = document.createElement("label");
+    seenLabel.className = "seen";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = status === "done";
+    box.addEventListener("change", () => {
+      setSeen(file, box.checked);
+      wrap.dataset.done = String(box.checked);
+      wrap.dataset.open = String(!box.checked);
+      render();
+    });
+    seenLabel.append(box, document.createTextNode("Reviewed"));
+
+    head.append(grow, counts, seenLabel);
+    wrap.append(head);
+
+    const body = document.createElement("div");
+    body.className = "body";
+    if (file.binary) {
+      const note = document.createElement("div");
+      note.className = "empty";
+      note.textContent = "Binary file";
+      body.append(note);
+    } else {
+      const table = document.createElement("table");
+      const tbody = document.createElement("tbody");
+      for (let order = 0; order < file.lines.length; order += 1) {
+        const [kind, oldNo, newNo, text] = file.lines[order];
+        const row = document.createElement("tr");
+        row.className = kind;
+        if (kind === "h") {
+          const cell = document.createElement("td");
+          cell.colSpan = 5;
+          const above = lastNumbered(file.lines.slice(0, order));
+          const room = newNo - (above ? above[2] : 0) - 1;
+          if (room <= 0) continue;
+          if (notes.live) {
+            const spot = order;
+            if (room > CONTEXT_STEP) {
+              for (const [label, upward] of [[`+${CONTEXT_STEP} up`, true], [`+${CONTEXT_STEP} down`, false]]) {
+                if (!upward && !above) continue;
+                const button = document.createElement("button");
+                button.className = "expand";
+                button.textContent = label;
+                button.addEventListener("click", () => fillGap(file, index, spot, upward, false));
+                cell.append(button);
+              }
+            }
+            const whole = document.createElement("button");
+            whole.className = "expand";
+            whole.textContent = room > CONTEXT_STEP ? `all ${room}` : `+${room}`;
+            whole.title = "Show every line between the hunks";
+            whole.addEventListener("click", () => fillGap(file, index, spot, true, true));
+            cell.append(whole);
+          }
+          const label = document.createElement("span");
+          label.className = "at";
+          label.textContent = text ? `@@ ${text}` : "@@";
+          cell.append(label);
+          row.append(cell);
+          tbody.append(row);
+          continue;
+        }
+        const line = kind === "d" ? oldNo : newNo;
+        const side = kind === "d" ? "old" : "new";
+        row.dataset.path = file.path;
+        row.dataset.line = String(line);
+        row.dataset.side = side;
+        row.dataset.seq = String(order);
+
+        const left = document.createElement("td");
+        left.className = "ln";
+        left.textContent = kind === "a" ? "" : String(oldNo);
+        const right = document.createElement("td");
+        right.className = "ln";
+        right.textContent = kind === "d" ? "" : String(newNo);
+        const gut = document.createElement("td");
+        gut.className = "gut";
+        const pin = document.createElement("button");
+        pin.className = "pin";
+        pin.textContent = "+";
+        pin.title = "Comment on the selected lines";
+        pin.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (pin.setPointerCapture) pin.setPointerCapture(event.pointerId);
+          pin.classList.add("held");
+          startDrag(row);
+        });
+        pin.addEventListener("click", () => {
+          if (!selRows().includes(row)) pick(row, false);
+          composeSel();
+        });
+        gut.append(pin);
+        const mark = document.createElement("td");
+        mark.className = "mark";
+        mark.textContent = kind === "a" ? "+" : kind === "d" ? "−" : " ";
+        const code = document.createElement("td");
+        code.className = "code";
+        code.textContent = text;
+
+        const select = (event) => pick(row, event.shiftKey);
+        for (const cell of [left, right, gut, mark]) cell.addEventListener("click", select);
+        row.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0 || event.shiftKey) return;
+          if (event.target.closest("button, textarea, input")) return;
+          // A press on the rail drags at once - the rail carries no selectable text - while one on the code only
+          // becomes a drag when it leaves the line, so selecting text inside a single line keeps working.
+          if (event.target.closest("td.code")) drag.armed = row;
+          else startDrag(row);
+        });
+        row.append(left, right, gut, mark, code);
+        tbody.append(row);
+
+        for (const note of notesAt(file.path, line, side)) {
+          note.source = notes.drafts.find((draft) => draft.text === note.text && draft.line === note.line && draft.path === note.path);
+          tbody.append(noteRow(note));
+        }
+      }
+      if (notes.live && lastNumbered(file.lines)) {
+        const row = document.createElement("tr");
+        row.className = "h";
+        const cell = document.createElement("td");
+        cell.colSpan = 5;
+        const button = document.createElement("button");
+        button.className = "expand";
+        button.textContent = `+${CONTEXT_STEP} below`;
+        button.addEventListener("click", () => fillTail(file, index));
+        cell.append(button);
+        row.append(cell);
+        tbody.append(row);
+      }
+      table.append(tbody);
+      body.append(table);
+    }
+    wrap.append(body);
+    return wrap;
+  }
+
+  function markCurrent() {
+    [...els.filelist.children].forEach((node, index) => node.setAttribute("data-current", String(index === state.current)));
+  }
+
+  function jump(index) {
+    const target = document.getElementById(`f${index}`);
+    if (!target) return;
+    state.current = index;
+    markCurrent();
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  els.scope.addEventListener("change", (event) => {
+    state.scope = event.target.value;
+    state.current = 0;
+    render();
+  });
+  els.q.addEventListener("input", (event) => {
+    state.query = event.target.value;
+    state.current = 0;
+    render();
+  });
+  els.ctx.addEventListener("click", () => {
+    const on = els.ctx.getAttribute("aria-pressed") !== "true";
+    els.ctx.setAttribute("aria-pressed", String(on));
+    document.body.classList.toggle("hide-context", on);
+  });
+  els.hidedone.addEventListener("click", () => {
+    const on = els.hidedone.getAttribute("aria-pressed") !== "true";
+    els.hidedone.setAttribute("aria-pressed", String(on));
+    document.body.classList.toggle("hide-done", on);
+  });
+  els.source.addEventListener("toggle", () => {
+    if (els.source.open) loadRefs();
+  });
+  els.srcbase.addEventListener("change", loadRefs);
+  els.srcdir.addEventListener("change", loadRefs);
+  els.srcfilter.addEventListener("input", drawRefs);
+  els.srcscan.addEventListener("click", rescan);
+  els.traysend.addEventListener("click", submitReview);
+  els.traydrop.addEventListener("click", () => {
+    notes.drafts = [];
+    els.traynote.value = "";
+    drawTray();
+    render();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) {
+      if (event.key === "Escape") event.target.blur();
+      return;
+    }
+    if (event.key === "/") {
+      event.preventDefault();
+      els.q.focus();
+      return;
+    }
+    const count = els.filelist.children.length;
+    if (event.key === "j" && count) jump(Math.min(state.current + 1, count - 1));
+    if (event.key === "k" && count) jump(Math.max(state.current - 1, 0));
+    if (event.key === "c") {
+      event.preventDefault();
+      composeSel();
+    }
+    if (event.key === "r") {
+      const file = visible(view().files)[state.current];
+      if (file) {
+        setSeen(file, seenState(file) !== "done");
+        render();
+      }
+    }
+    if (event.key === "Escape") clearSel();
+  });
+
+  // Resolutions are posted by whoever is working through the comments, so an idle page picks them up on its own.
+  setInterval(() => {
+    if (!notes.live || document.querySelector("tr[data-composer]") || notes.drafts.length) return;
+    loadNotes().then(render);
+  }, 10000);
+
+  const measureHead = () => {
+    const box = document.querySelector("header").getBoundingClientRect();
+    document.documentElement.style.setProperty("--head", `${Math.round(box.height)}px`);
+  };
+  new ResizeObserver(measureHead).observe(document.querySelector("header"));
+  measureHead();
+
+  loadSeen();
+  showSource();
+  renderTabs();
+  renderScopes();
+  render();
+  drawTray();
+  loadNotes().then(render);
+</script>
