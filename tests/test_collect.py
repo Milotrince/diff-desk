@@ -70,6 +70,20 @@ def test_a_pull_request_needs_a_github_remote_to_resolve_against(repo):
         gen_diff_data.collect(str(repo), "main", ["#3243"])
 
 
+def test_a_pull_request_fetched_earlier_is_reviewable_while_github_is_unreachable(repo):
+    # Whatever GitHub cannot answer for, the head already on disk can: an outage must not cost the review.
+    gen_diff_data.run(repo, "update-ref", "refs/diffdesk/pull/77", "feature")
+    try:
+        data = gen_diff_data.collect(str(repo), "main", ["#77"])
+        branch = data["branches"][0]
+        assert branch["ref"] == "refs/diffdesk/pull/77"
+        assert branch["blurb"] == "#77"
+        assert branch["pr"]["number"] == 77
+        assert [entry["path"] for entry in branch["files"]] == ["added.py", "pkg/sub/deep.py", "sample.py"]
+    finally:
+        gen_diff_data.run(repo, "update-ref", "-d", "refs/diffdesk/pull/77")
+
+
 def test_a_repository_without_a_remote_claims_no_upstream(repo, payload):
     assert gen_diff_data.canonical_repo(str(repo)) == ""
     assert payload["upstream"] == ""

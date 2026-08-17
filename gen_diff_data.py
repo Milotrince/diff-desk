@@ -62,8 +62,16 @@ def fetch_pull(root, upstream, number):
 
     Fetched by number through the upstream repository, so neither the fork it lives on nor the branch name it uses has
     to be known, and a head force-pushed since the last look is picked up.
+
+    A head fetched earlier stays reviewable while GitHub is unreachable: whatever cannot be read or fetched falls back
+    to what is already on disk, and only a pull request with nothing local behind it is refused.
     """
+    local = f"refs/diffdesk/pull/{number}"
+    held = run(root, "rev-parse", "--verify", "--quiet", local).strip()
+    fetched = {"number": number, "title": f"#{number}", "url": "", "headRefName": local}
     if not upstream:
+        if held:
+            return local, fetched
         raise RuntimeError(f"#{number} needs a GitHub remote to resolve against, and this repository has none")
     wanted = "number,title,url,headRefName,baseRefName"
     seen = subprocess.run(
@@ -74,10 +82,13 @@ def fetch_pull(root, upstream, number):
         timeout=60,
         check=False,
     )
-    if seen.returncode != 0:
+    if seen.returncode == 0:
+        request = json.loads(seen.stdout)
+    elif held:
+        print(f"#{number} could not be read from {upstream}; showing the head fetched earlier", flush=True)
+        request = fetched
+    else:
         raise RuntimeError(f"#{number} could not be read from {upstream}: {' '.join(seen.stderr.split())[:200]}")
-    request = json.loads(seen.stdout)
-    local = f"refs/diffdesk/pull/{number}"
     brought = subprocess.run(
         ["git", "fetch", "--quiet", f"https://github.com/{upstream}.git", f"+refs/pull/{number}/head:{local}"],
         capture_output=True,
@@ -87,7 +98,9 @@ def fetch_pull(root, upstream, number):
         check=False,
     )
     if brought.returncode != 0:
-        raise RuntimeError(f"#{number} could not be fetched: {' '.join(brought.stderr.split())[:200]}")
+        if not held:
+            raise RuntimeError(f"#{number} could not be fetched: {' '.join(brought.stderr.split())[:200]}")
+        print(f"#{number} could not be fetched; showing the head fetched earlier", flush=True)
     return local, request
 
 

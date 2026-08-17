@@ -20,7 +20,8 @@ What can be reviewed:
   branch is shown with its uncommitted work included, so a review can start before a commit exists.
 - **Pull requests, by number** - `3243`, `#3243` or `pr/3243`. The head is fetched from the upstream repository by
   number, so neither the fork it lives on nor the branch name it uses has to be known, and a head force-pushed since
-  the last look is picked up. It lands in `refs/diffdesk/pull/<number>`, out of the way of your own branches.
+  the last look is picked up. It lands in `refs/diffdesk/pull/<number>`, out of the way of your own branches. One
+  fetched earlier stays reviewable while GitHub is unreachable: what cannot be read falls back to the head on disk.
 
 Both can be reviewed side by side in one desk, as tabs. Repository, base, branches and pull requests can also be
 switched from the page's own Source panel, without restarting anything - it lists the branches ahead of the base and
