@@ -334,14 +334,96 @@
   }
   button.ghost { background: transparent; color: var(--muted); border-color: var(--rule-strong); }
 
-  .note { display: flex; gap: 8px; padding: 7px 10px; background: var(--accent-soft); border-left: 3px solid var(--accent); font-family: var(--sans); font-size: 12.5px; white-space: normal; }
-  .note.draft { background: transparent; border-left-style: dashed; }
-  .note .who { font-family: var(--mono); font-size: 11px; color: var(--muted); flex: none; }
-  .note.draft .who { color: var(--accent); }
-  .note.done { background: var(--add-bg); border-left-color: var(--add-gutter); color: var(--muted); }
-  .note.done .who { color: var(--add-ink); }
-  .note .answer { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--add-ink); }
+  .thread {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 7px 10px;
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    font-family: var(--sans);
+    font-size: 12.5px;
+    white-space: normal;
+  }
+  .thread .line { display: flex; align-items: baseline; gap: 8px; }
+  .thread .who { flex: none; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .thread .said { flex: 1; }
+  .thread.draft { background: transparent; border-left-style: dashed; }
+  .thread.draft .who { color: var(--accent); }
+  .thread.done { background: var(--add-bg); border-left-color: var(--add-gutter); }
+  .thread.done > .line:first-child .said { color: var(--muted); }
+  .thread .reply { padding-left: 10px; border-left: 1px solid var(--rule-strong); }
+  .thread .reply.session .who { color: var(--accent); }
+  .thread .reply.you .who { color: var(--add-ink); }
+  .thread .mark { flex: none; font-family: var(--mono); font-size: 10.5px; padding: 0 6px; border-radius: 999px; }
+  .thread .mark.pending { color: var(--stale); background: var(--stale-bg); }
+  .thread .mark.failed { color: var(--del-ink); background: var(--del-bg); }
+  .thread .mark.posted { color: var(--add-ink); background: var(--add-bg); }
+  .thread .actions { align-items: center; }
+  .thread .actions textarea { flex: 1; min-height: 0; resize: vertical; }
+  button.tiny {
+    flex: none;
+    font: inherit;
+    font-family: var(--sans);
+    font-size: 10.5px;
+    padding: 0 6px;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  button.tiny:hover { color: var(--accent); border-color: var(--accent); }
+  .thread.stale { border-left-style: dotted; background: var(--stale-bg); }
+
+  .thread .drop { margin-left: auto; border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
   .note .drop { margin-left: auto; border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+
+  .log {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 45;
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    width: min(560px, calc(100vw - 40px));
+    max-height: min(70vh, 620px);
+    padding: 12px;
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+  .log[data-open="true"] { display: flex; }
+  .log .head { display: flex; align-items: baseline; gap: 10px; }
+  .log .head .ghost { margin-left: auto; }
+  .log .rows { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+  .log .actions { display: flex; align-items: center; gap: 8px; }
+  .logrow {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 8px;
+    text-align: left;
+    font: inherit;
+    font-size: 12px;
+    color: var(--ink);
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .logrow:hover { border-color: var(--accent); }
+  .logrow[data-state="resolved"] { opacity: 0.7; }
+  .logrow b { flex: none; font-family: var(--mono); font-size: 11px; }
+  .logrow .said { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .logrow .mark, .thread .mark { flex: none; font-family: var(--mono); font-size: 10.5px; padding: 0 6px; border-radius: 999px; }
+  .mark.pending { color: var(--stale); background: var(--stale-bg); }
+  .mark.failed { color: var(--del-ink); background: var(--del-bg); }
+  .mark.posted, .mark.resolved { color: var(--add-ink); background: var(--add-bg); }
+  .mark.outdated { color: var(--stale); background: var(--stale-bg); }
+  .mark.open, .mark.none { color: var(--muted); background: var(--surface); border: 1px solid var(--rule); }
 
   .tray {
     position: fixed;
@@ -472,8 +554,22 @@
     <span class="plus num" id="tplus"></span>
     <span class="minus num" id="tminus"></span>
   </div>
+  <button class="toggle" id="logopen" title="Every comment recorded, and where each one stands">Comments</button>
   <span class="status" id="status"></span>
 </header>
+
+<div class="log" id="log" data-open="false">
+  <div class="head">
+    <strong>Comments</strong>
+    <span class="status" id="logcount"></span>
+    <button class="ghost" id="logclose">Close</button>
+  </div>
+  <div class="rows" id="logrows"></div>
+  <div class="actions">
+    <button class="solid" id="logretry">Send what is waiting</button>
+    <span class="status" id="logresult"></span>
+  </div>
+</div>
 
 <div class="tray" id="tray" data-open="false">
   <div class="head"><strong id="traycount"></strong><span class="status">not sent yet</span></div>
@@ -511,7 +607,7 @@
   let seen = {};
 
   const els = {};
-  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
+  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logclose", "logresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
     els[id] = document.getElementById(id);
   }
 
@@ -566,6 +662,20 @@
 
   /* ---------- comments ---------- */
 
+  async function post(route, payload) {
+    try {
+      const answer = await fetch(route, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return await answer.json();
+    } catch (error) {
+      notes.live = false;
+      return { ok: false, error: error.message };
+    }
+  }
+
   async function loadNotes() {
     try {
       const response = await fetch("comments", { cache: "no-store" });
@@ -583,16 +693,111 @@
   }
 
   function showStatus(staleCount) {
-    const where = notes.live ? "watched by Claude" : "kept in this browser";
     const bits = [];
-    const closed = notes.sent.filter((note) => note.state === "resolved").length;
-    if (notes.sent.length) bits.push(`<b>${notes.sent.length}</b> sent${closed ? `, ${closed} addressed` : ""}`);
-    bits.push(where);
+    const rows = notes.sent.filter((note) => note.path !== "(review)");
+    const closed = rows.filter((note) => note.state === "resolved").length;
+    const owed = rows.filter((note) => OWED.includes(note.github)).length;
+    if (rows.length) bits.push(`<b>${rows.length}</b> comment${rows.length === 1 ? "" : "s"}, ${closed} resolved`);
+    if (owed) bits.push(`${owed} waiting for GitHub`);
+    bits.push(notes.live ? "watched by Claude" : "kept in this browser");
     if (staleCount) bits.push(`${staleCount} reopened`);
-    els.status.innerHTML = bits.join(" · ");
+    els.status.innerHTML = bits.join(" \u00b7 ");
   }
 
-  const span = (note) => (note.endLine && note.endLine !== note.line ? `L${note.line}–${note.endLine}` : `L${note.line}`);
+  const span = (note) => (note.endLine && note.endLine !== note.line ? `L${note.line}\u2013${note.endLine}` : `L${note.line}`);
+
+  const OWED = ["pending", "failed"];
+
+  /* ---------- the log: what is waiting, what is on the PR, what is local only, what has moved on ---------- */
+
+  function present() {
+    // Every line the current view can anchor a comment to, so a comment that no longer has one can be told apart.
+    const keys = new Set();
+    for (const file of view().files) {
+      for (const [kind, oldNo, newNo] of file.lines) {
+        if (kind === "h") continue;
+        keys.add(`${file.path}|${kind === "d" ? "old" : "new"}|${kind === "d" ? oldNo : newNo}`);
+      }
+    }
+    return keys;
+  }
+
+  const isOutdated = (note, keys) => !keys.has(`${note.path}|${note.side}|${note.endLine || note.line}`);
+
+  function mine() {
+    return notes.sent.filter((note) => note.branch === branch().ref && note.path !== "(review)");
+  }
+
+  function drawLog() {
+    const keys = present();
+    const rows = mine();
+    const owed = rows.filter((note) => OWED.includes(note.github));
+    const counted = [
+      `${rows.filter((note) => note.state === "open").length} open`,
+      `${rows.filter((note) => note.state === "resolved").length} resolved`,
+    ];
+    if (owed.length) counted.push(`${owed.length} waiting for GitHub`);
+    const posted = rows.filter((note) => note.github === "posted").length;
+    if (posted) counted.push(`${posted} on the PR`);
+    els.logcount.textContent = counted.join(" \u00b7 ");
+    els.logopen.textContent = owed.length ? `Comments (${owed.length} waiting)` : `Comments (${rows.length})`;
+    els.logretry.disabled = !owed.length;
+    els.logrows.innerHTML = "";
+    for (const note of rows) {
+      const item = document.createElement("button");
+      item.className = "logrow";
+      item.dataset.state = note.state;
+      const where = document.createElement("b");
+      where.textContent = `${note.path.split("/").pop()} ${span(note)}`;
+      const said = document.createElement("span");
+      said.className = "said";
+      said.textContent = note.text.split("\n")[0].slice(0, 90);
+      item.append(where, said);
+      for (const [label, kind] of [
+        [note.state === "resolved" ? "resolved" : "open", note.state],
+        [note.github === "none" ? "local only" : GITHUB_MARK[note.github], note.github],
+        [isOutdated(note, keys) ? "code moved on" : "", "outdated"],
+      ]) {
+        if (!label) continue;
+        const mark = document.createElement("span");
+        mark.className = `mark ${kind}`;
+        mark.textContent = label;
+        if (note.error && kind === "failed") mark.title = note.error;
+        item.append(mark);
+      }
+      item.addEventListener("click", () => {
+        const row = document.querySelector(
+          `tr[data-path="${CSS.escape(note.path)}"][data-side="${note.side}"][data-line="${note.endLine || note.line}"]`,
+        );
+        const card = document.getElementById(`note-${note.seq}`) || row;
+        if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      els.logrows.append(item);
+    }
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "No comments on this branch yet.";
+      els.logrows.append(empty);
+    }
+  }
+
+  async function retryOwed(loud) {
+    const owed = mine().filter((note) => OWED.includes(note.github));
+    const request = branch().pr;
+    if (!owed.length || !request || !notes.live) {
+      if (loud) els.logresult.textContent = request ? "Nothing is waiting." : "This branch has no pull request.";
+      return;
+    }
+    els.logresult.textContent = `Sending ${owed.length} to PR #${request.number}...`;
+    const outcome = await post("publish", { repo: data.upstream, pr: request.number, seq: owed.map((note) => note.seq) });
+    els.logresult.textContent = outcome.ok
+      ? `Sent ${outcome.sent} to PR #${request.number}`
+      : `Still waiting: ${outcome.error || "GitHub unreachable"}`;
+    await loadNotes();
+    drawLog();
+    render();
+  }
 
   function drawTray() {
     const request = branch().pr;
@@ -610,38 +815,40 @@
     });
   }
 
-  async function submitReview() {
-    if (!notes.drafts.length) return;
-    const summary = els.traynote.value.trim();
-    const batch = [...notes.drafts];
+  async function send(drafts, summary) {
+    if (!drafts.length) return;
+    const bound = els.togh.checked && Boolean(branch().pr);
+    const batch = [...drafts];
     if (summary) batch.push({ branch: branch().ref, path: "(review)", line: 0, side: "new", text: summary, at: stamp() });
-    if (notes.live) {
-      try {
-        await fetch("comments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(batch) });
-      } catch (error) {
-        notes.live = false;
-      }
+    let recorded = null;
+    if (notes.live) recorded = await post("comments", { comments: batch, github: bound });
+    if (bound && recorded && recorded.ok) {
+      els.trayresult.textContent = `Posting ${batch.length} to PR #${branch().pr.number}...`;
+      const outcome = await post("publish", {
+        repo: data.upstream,
+        pr: branch().pr.number,
+        summary,
+        seq: recorded.seqs,
+      });
+      // A post that does not land leaves the comments waiting rather than losing them; the log says so and retries.
+      els.trayresult.textContent = outcome.ok
+        ? `Posted to PR #${branch().pr.number}`
+        : `GitHub did not take it, kept waiting: ${outcome.error || "unreachable"}`;
     }
-    if (els.togh.checked && branch().pr && notes.live) {
-      els.trayresult.textContent = `Posting ${batch.length} to PR #${branch().pr.number}…`;
-      try {
-        const response = await fetch("publish", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: data.upstream, pr: branch().pr.number, summary, comments: notes.drafts }),
-        });
-        const outcome = await response.json();
-        els.trayresult.textContent = outcome.ok ? `Posted to PR #${branch().pr.number}` : `GitHub refused: ${outcome.error}`;
-      } catch (error) {
-        els.trayresult.textContent = `Could not reach GitHub: ${error.message}`;
-      }
+    if (!notes.live) {
+      notes.sent.push(...batch);
+      localStorage.setItem("diffdesk.notes", JSON.stringify(notes.sent));
     }
-    notes.sent.push(...batch);
-    if (!notes.live) localStorage.setItem("diffdesk.notes", JSON.stringify(notes.sent));
-    notes.drafts = [];
-    els.traynote.value = "";
+    notes.drafts = notes.drafts.filter((draft) => !drafts.includes(draft));
+    if (summary) els.traynote.value = "";
+    await loadNotes();
     drawTray();
+    drawLog();
     render();
+  }
+
+  async function submitReview() {
+    await send(notes.drafts, els.traynote.value.trim());
   }
 
   function notesAt(path, line, side) {
@@ -649,36 +856,146 @@
     return [...notes.sent.filter(hit), ...notes.drafts.filter(hit).map((draft) => ({ ...draft, pending: true }))];
   }
 
+  const GITHUB_MARK = { pending: "waiting for GitHub", failed: "GitHub post failed", posted: "on the PR" };
+
   function noteRow(note) {
     const row = document.createElement("tr");
     row.className = "noterow";
+    row.id = `note-${note.seq || "draft"}`;
     const cell = document.createElement("td");
     cell.colSpan = 5;
     const box = document.createElement("div");
-    box.className = note.pending ? "note draft" : note.state === "resolved" ? "note done" : "note";
+    box.className = note.pending ? "thread draft" : note.state === "resolved" ? "thread done" : "thread";
+    if (note.outdated) box.classList.add("stale");
+
+    const head = document.createElement("div");
+    head.className = "line";
     const who = document.createElement("span");
     who.className = "who";
-    who.textContent = note.pending ? `${span(note)} pending` : note.state === "resolved" ? `${span(note)} done` : span(note);
+    who.textContent = note.pending ? `${span(note)} pending` : span(note);
     const text = document.createElement("span");
+    text.className = "said";
     text.textContent = note.text;
-    box.append(who, text);
-    if (note.answer) {
-      const answer = document.createElement("span");
-      answer.className = "answer";
-      answer.textContent = note.answer;
-      box.append(answer);
+    head.append(who, text);
+    if (note.pending || notes.live) {
+      const change = document.createElement("button");
+      change.className = "tiny";
+      change.textContent = "Edit";
+      change.title = note.edits && note.edits.length ? `rewritten ${note.edits.length} time(s)` : "Rewrite this comment";
+      change.addEventListener("click", () => {
+        const written = document.createElement("textarea");
+        written.rows = 2;
+        written.value = note.text;
+        const keep = document.createElement("button");
+        keep.className = "solid";
+        keep.textContent = "Save";
+        const drop = document.createElement("button");
+        drop.className = "ghost";
+        drop.textContent = "Cancel";
+        const editing = document.createElement("div");
+        editing.className = "line actions";
+        editing.append(written, keep, drop);
+        head.replaceWith(editing);
+        written.focus();
+        drop.addEventListener("click", render);
+        keep.addEventListener("click", async () => {
+          const wanted = written.value.trim();
+          if (!wanted || wanted === note.text) return render();
+          if (note.pending) {
+            // A draft is only in the page, so rewriting it is rewriting the draft itself.
+            if (note.source) note.source.text = wanted;
+            drawTray();
+          } else {
+            await post("edit", { seq: note.seq, text: wanted });
+            await loadNotes();
+          }
+          drawLog();
+          render();
+        });
+      });
+      head.append(change);
+    }
+    if (!note.pending && note.editedAfterPost) {
+      const mark = document.createElement("span");
+      mark.className = "mark outdated";
+      mark.textContent = "rewritten after posting";
+      head.append(mark);
+    }
+    if (note.outdated) {
+      const mark = document.createElement("span");
+      mark.className = "mark outdated";
+      mark.textContent = "code moved on";
+      mark.title = `${note.path} ${span(note)} is no longer in this diff`;
+      head.append(mark);
+    }
+    if (!note.pending && note.github && note.github !== "none") {
+      const mark = document.createElement("span");
+      mark.className = `mark ${note.github}`;
+      mark.textContent = GITHUB_MARK[note.github] || note.github;
+      if (note.error) mark.title = note.error;
+      if (note.reviewUrl) mark.title = note.reviewUrl;
+      head.append(mark);
     }
     if (note.pending) {
       const drop = document.createElement("button");
       drop.className = "drop";
       drop.title = "Remove this comment";
-      drop.textContent = "×";
+      drop.textContent = "\u00d7";
       drop.addEventListener("click", () => {
         notes.drafts = notes.drafts.filter((draft) => draft !== note.source);
         drawTray();
         render();
       });
-      box.append(drop);
+      head.append(drop);
+    }
+    box.append(head);
+
+    for (const answer of note.replies || []) {
+      const said = document.createElement("div");
+      said.className = `line reply ${answer.who}`;
+      const from = document.createElement("span");
+      from.className = "who";
+      from.textContent = answer.who === "you" ? `you ${answer.at}` : `claude ${answer.at}`;
+      const body = document.createElement("span");
+      body.className = "said";
+      body.textContent = answer.text;
+      said.append(from, body);
+      box.append(said);
+    }
+
+    // A recorded comment can be answered and closed from here; resolving keeps the thread and all of its replies.
+    if (!note.pending && notes.live) {
+      const actions = document.createElement("div");
+      actions.className = "line actions";
+      const say = document.createElement("textarea");
+      say.rows = 1;
+      say.placeholder = note.state === "resolved" ? "Reopen with a reply" : "Reply";
+      const send = document.createElement("button");
+      send.className = "ghost";
+      send.textContent = "Reply";
+      send.addEventListener("click", async () => {
+        if (!say.value.trim()) return;
+        await post("reply", { seq: note.seq, text: say.value.trim(), who: "you" });
+        say.value = "";
+        await loadNotes();
+        render();
+      });
+      const close = document.createElement("button");
+      close.className = note.state === "resolved" ? "ghost" : "solid";
+      close.textContent = note.state === "resolved" ? "Reopen" : "Resolve";
+      close.addEventListener("click", async () => {
+        await post("resolve", {
+          seq: [note.seq],
+          answer: say.value.trim(),
+          resolved: note.state !== "resolved",
+          who: "you",
+        });
+        say.value = "";
+        await loadNotes();
+        render();
+      });
+      actions.append(say, send, close);
+      box.append(actions);
     }
     cell.append(box);
     row.append(cell);
@@ -718,7 +1035,10 @@
   // Dragging over lines selects the range covered, and letting go opens the comment box on it. The row under the
   // pointer is found by position instead of by event target: once a press has begun a text selection, browsers stop
   // retargeting hover events to the elements passing underneath, so a target-based drag never leaves its first line.
-  const drag = { on: false, armed: null, ranged: false };
+  const drag = { on: false, armed: null, ranged: false, at: 0 };
+
+  // How far down the pointer must travel before a press on code becomes a range rather than a text selection.
+  const LEAVES_LINE = 6;
 
   function rowAt(x, y) {
     const node = document.elementFromPoint(x, y);
@@ -744,15 +1064,31 @@
 
   function overDrag(x, y) {
     if (!drag.on && drag.armed === null) return;
-    const row = rowAt(x, y);
-    if (!row) return;
     if (!drag.on) {
-      if (row === drag.armed) return;
-      // The press started on code, so the text selection it began is dropped in favour of the range.
+      // Judged on the travel rather than on what sits under the pointer: a wide code cell, a comment thread or a
+      // hunk header may all pass beneath a drag, and none of them mean the gesture was meant to stay a text
+      // selection. Horizontal travel alone still selects text within the line.
+      if (Math.abs(y - drag.at) <= LEAVES_LINE) return;
       const text = window.getSelection();
       if (text) text.removeAllRanges();
       startDrag(drag.armed);
     }
+    let row = rowAt(x, y);
+    if (!row) {
+      // The pointer sits over something floating above the lines - the page header, a file name bar - or past the
+      // last line. None of that means the range should stop growing, so it takes the nearest line of the same file.
+      // Geometry rather than a guessed offset: whatever floats there, the nearest row is still the intended one.
+      let gap = Infinity;
+      for (const node of document.querySelectorAll(`tr[data-path="${CSS.escape(sel.path)}"][data-seq]`)) {
+        const box = node.getBoundingClientRect();
+        const away = y < box.top ? box.top - y : Math.max(0, y - box.bottom);
+        if (away < gap) {
+          gap = away;
+          row = node;
+        }
+      }
+    }
+    if (!row) return;
     if (row.dataset.path !== sel.path) return;
     const seq = Number(row.dataset.seq);
     if (seq !== sel.to) drag.ranged = true;
@@ -773,9 +1109,27 @@
     true,
   );
 
-  document.addEventListener("pointermove", (event) => overDrag(event.clientX, event.clientY));
+  const EDGE = 70;
+
+  document.addEventListener("pointermove", (event) => {
+    // A release outside the window is never delivered, so a move with no button held is the release itself. Without
+    // this the desk stays mid-drag for good: every later hover keeps extending a range nobody is holding.
+    if (drag.on && event.buttons === 0) {
+      endDrag();
+      return;
+    }
+    if (drag.on) {
+      // A range longer than the view has to be reachable, so nearing an edge scrolls rather than stopping there.
+      const above = event.clientY - EDGE;
+      const below = event.clientY - (window.innerHeight - EDGE);
+      if (above < 0) window.scrollBy(0, Math.max(above, -24));
+      else if (below > 0) window.scrollBy(0, Math.min(below, 24));
+    }
+    overDrag(event.clientX, event.clientY);
+  });
   document.addEventListener("pointerup", endDrag);
   document.addEventListener("pointercancel", endDrag);
+  document.addEventListener("mouseup", endDrag);
   window.addEventListener("blur", endDrag);
 
   // A line range is only expressible on one side, so a range touching added or unchanged lines is anchored there and
@@ -1255,8 +1609,10 @@
           if (event.target.closest("button, textarea, input")) return;
           // A press on the rail drags at once - the rail carries no selectable text - while one on the code only
           // becomes a drag when it leaves the line, so selecting text inside a single line keeps working.
-          if (event.target.closest("td.code")) drag.armed = row;
-          else startDrag(row);
+          if (event.target.closest("td.code")) {
+            drag.armed = row;
+            drag.at = event.clientY;
+          } else startDrag(row);
         });
         row.append(left, right, gut, mark, code);
         tbody.append(row);
@@ -1265,6 +1621,10 @@
           note.source = notes.drafts.find((draft) => draft.text === note.text && draft.line === note.line && draft.path === note.path);
           tbody.append(noteRow(note));
         }
+      }
+      const keys = present();
+      for (const note of mine().filter((note) => note.path === file.path && isOutdated(note, keys))) {
+        tbody.append(noteRow({ ...note, outdated: true }));
       }
       if (notes.live && lastNumbered(file.lines)) {
         const row = document.createElement("tr");
@@ -1326,6 +1686,16 @@
   els.srcfilter.addEventListener("input", drawRefs);
   els.srcscan.addEventListener("click", rescan);
   els.traysend.addEventListener("click", submitReview);
+  els.logopen.addEventListener("click", () => {
+    els.log.dataset.open = els.log.dataset.open === "true" ? "false" : "true";
+    drawLog();
+  });
+  els.logclose.addEventListener("click", () => {
+    els.log.dataset.open = "false";
+  });
+  els.logretry.addEventListener("click", () => retryOwed(true));
+  // Coming back online is the moment a post that could not be made becomes possible again.
+  window.addEventListener("online", () => retryOwed(false));
   els.traydrop.addEventListener("click", () => {
     notes.drafts = [];
     els.traynote.value = "";
@@ -1361,9 +1731,16 @@
   });
 
   // Resolutions are posted by whoever is working through the comments, so an idle page picks them up on its own.
-  setInterval(() => {
+  setInterval(async () => {
+    // Never redraw under a gesture: rebuilding the table destroys the pin holding the pointer, and the release that
+    // would have opened the comment box is delivered to a node that is no longer in the page.
+    if (drag.on || drag.armed) return;
     if (!notes.live || document.querySelector("tr[data-composer]") || notes.drafts.length) return;
-    loadNotes().then(render);
+    await loadNotes();
+    drawLog();
+    render();
+    // A post that could not be made is retried on its own, as long as the browser believes it is connected.
+    if (navigator.onLine) await retryOwed(false);
   }, 10000);
 
   const measureHead = () => {
@@ -1379,5 +1756,8 @@
   renderScopes();
   render();
   drawTray();
-  loadNotes().then(render);
+  loadNotes().then(() => {
+    drawLog();
+    render();
+  });
 </script>

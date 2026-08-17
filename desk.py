@@ -3,8 +3,10 @@
 desk.py serve --dir <repo> --base <ref> [refs ...]   collect the diffs and serve them (blocks)
 desk.py watch [--since N]                            block until a review batch is submitted, then print it
 desk.py comments [--all]                             what has been submitted, unresolved unless --all
-desk.py resolve 3 4 --answer "fixed in abc1234"      mark comments addressed, which the page then shows
-desk.py refs --dir <repo> --base <ref>               the branches ahead of a base
+desk.py reply 3 "why it happens ..."                 answer a comment without closing it
+desk.py edit 3 "what I actually meant ..."            rewrite a comment, keeping what it said before
+desk.py resolve 3 4 --answer "fixed in abc1234"      answer and close; --reopen puts them back
+desk.py refs --dir <repo> --base <ref>               the branches ahead of a base, and the open pull requests
 """
 
 import argparse
@@ -45,7 +47,17 @@ def span(note):
 
 def show(note):
     text = " ".join(str(note.get("text", "")).split())
+    marks = [note.get("state", "open")]
+    if note.get("github", "none") != "none":
+        marks.append(f"github {note['github']}")
+    if note.get("error"):
+        marks.append(f"error {note['error'][:60]}")
     print(f"[{note['seq']}] {note.get('branch', '?')} {note['path']}:{span(note)} ({note.get('side')}) {text}")
+    print(f"      {' | '.join(marks)}")
+    for answer in note.get("replies") or []:
+        print(f"      {answer['who']} {answer['at']}: {' '.join(answer['text'].split())}")
+    for earlier in note.get("edits") or []:
+        print(f"      was {earlier['at']}: {' '.join(earlier['text'].split())[:80]}")
 
 
 def serve(args):
@@ -97,11 +109,29 @@ def comments(args):
         show(note)
 
 
-def resolve(args):
-    outcome = ask("/resolve", {"seq": args.seq, "answer": args.answer})
+def edit(args):
+    outcome = ask("/edit", {"seq": args.seq, "text": " ".join(args.text)})
     if outcome is None:
         sys.exit("nothing is serving")
-    print(f"marked {outcome['resolved']} comment(s) addressed")
+    if not outcome.get("ok"):
+        sys.exit(outcome.get("error", "the edit was refused"))
+    print(f"rewrote [{outcome['seq']}], {outcome['edits']} earlier wording(s) kept")
+
+
+def reply(args):
+    outcome = ask("/reply", {"seq": args.seq, "text": " ".join(args.text), "who": "session"})
+    if outcome is None:
+        sys.exit("nothing is serving")
+    if not outcome.get("ok"):
+        sys.exit(outcome.get("error", "the reply was refused"))
+    print(f"replied to [{outcome['seq']}], now {outcome['replies']} reply(ies) on it")
+
+
+def resolve(args):
+    outcome = ask("/resolve", {"seq": args.seq, "answer": args.answer, "resolved": not args.reopen, "who": "session"})
+    if outcome is None:
+        sys.exit("nothing is serving")
+    print(f"{'reopened' if args.reopen else 'closed'} {outcome['resolved']} comment(s)")
 
 
 def refs(args):
@@ -142,9 +172,20 @@ job = jobs.add_parser("comments", help="what has been submitted")
 job.add_argument("--all", action="store_true", help="include the ones already addressed")
 job.set_defaults(run=comments)
 
-job = jobs.add_parser("resolve", help="mark comments addressed")
+job = jobs.add_parser("edit", help="rewrite a comment, keeping what it said before")
+job.add_argument("seq", type=int)
+job.add_argument("text", nargs="+")
+job.set_defaults(run=edit)
+
+job = jobs.add_parser("reply", help="answer a comment without closing it")
+job.add_argument("seq", type=int)
+job.add_argument("text", nargs="+", help="the reply, shown under the comment on the page")
+job.set_defaults(run=reply)
+
+job = jobs.add_parser("resolve", help="answer and close comments, or reopen them")
 job.add_argument("seq", nargs="+", type=int)
-job.add_argument("--answer", default="", help="a short note shown next to the comment on the page")
+job.add_argument("--answer", default="", help="the closing reply, shown under the comment on the page")
+job.add_argument("--reopen", action="store_true", help="put the comments back to open instead")
 job.set_defaults(run=resolve)
 
 job = jobs.add_parser("refs", help="the branches ahead of a base, and the open pull requests")

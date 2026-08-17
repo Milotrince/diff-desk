@@ -90,15 +90,93 @@ def test_a_batch_is_recorded_numbered_and_read_back_past_a_cursor(desk):
     assert [row["text"] for row in desk.get(f"/comments?since={first['seq']}")] == ["alone"]
 
 
-def test_resolving_closes_only_what_was_named(desk):
+def test_resolving_closes_only_what_was_named_and_can_be_undone(desk):
     marked = desk.post("/comments", {"branch": "feature", "path": "sample.py", "line": 8, "side": "new", "text": "one"})
     other = desk.post("/comments", {"branch": "feature", "path": "sample.py", "line": 9, "side": "new", "text": "two"})
     outcome = desk.post("/resolve", {"seq": [marked["seq"]], "answer": "done in abc1234"})
-    assert outcome == {"ok": True, "resolved": 1}
+    assert outcome["resolved"] == 1
     rows = {row["seq"]: row for row in desk.get("/comments")}
-    assert rows[marked["seq"]]["state"] == "resolved"
-    assert rows[marked["seq"]]["answer"] == "done in abc1234"
+    closed = rows[marked["seq"]]
+    assert closed["state"] == "resolved"
+    # Closing keeps the remark and files the answer as a reply of its own, so nothing about it is lost.
+    assert closed["text"] == "one"
+    assert [(reply["who"], reply["text"]) for reply in closed["replies"]] == [("session", "done in abc1234")]
     assert rows[other["seq"]]["state"] == "open"
+
+    reopened = desk.post("/resolve", {"seq": [marked["seq"]], "resolved": False, "who": "you"})
+    assert reopened["state"] == "open"
+    again = {row["seq"]: row for row in desk.get("/comments")}[marked["seq"]]
+    assert again["state"] == "open"
+    assert len(again["replies"]) == 1
+
+
+def test_either_side_can_reply_without_closing_the_thread(desk):
+    made = desk.post("/comments", {"branch": "feature", "path": "sample.py", "line": 11, "side": "new", "text": "why?"})
+    assert desk.post("/reply", {"seq": made["seq"], "text": "because of X", "who": "session"})["replies"] == 1
+    assert desk.post("/reply", {"seq": made["seq"], "text": "then what about Y", "who": "you"})["replies"] == 2
+    row = {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]
+    assert [(reply["who"], reply["text"]) for reply in row["replies"]] == [
+        ("session", "because of X"),
+        ("you", "then what about Y"),
+    ]
+    assert row["state"] == "open"
+    assert desk.post("/reply", {"seq": made["seq"], "text": "   "})["ok"] is False
+    assert desk.post("/reply", {"seq": 99999, "text": "nowhere"})["ok"] is False
+
+
+def test_rewriting_a_comment_keeps_what_it_said_before(desk):
+    made = desk.post(
+        "/comments", {"branch": "feature", "path": "sample.py", "line": 12, "side": "new", "text": "first"}
+    )
+    assert desk.post("/edit", {"seq": made["seq"], "text": "second"})["edits"] == 1
+    assert desk.post("/edit", {"seq": made["seq"], "text": "third"})["edits"] == 2
+    row = {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]
+    assert row["text"] == "third"
+    assert [earlier["text"] for earlier in row["edits"]] == ["first", "second"]
+    assert desk.post("/edit", {"seq": made["seq"], "text": " "})["ok"] is False
+
+
+def test_a_comment_bound_for_github_waits_rather_than_being_lost(desk):
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [{"branch": "feature", "path": "sample.py", "line": 13, "side": "new", "text": "for the PR"}],
+            "github": True,
+        },
+    )
+    rows = {row["seq"]: row for row in desk.get("/comments")}
+    assert rows[made["seqs"][0]]["github"] == "pending"
+
+    # A repository that cannot take it stands in for every way a post fails: no network, no permission, wrong slug.
+    outcome = desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1, "seq": made["seqs"]})
+    assert outcome["ok"] is False
+    assert outcome["sent"] == 0
+    kept = {row["seq"]: row for row in desk.get("/comments")}[made["seqs"][0]]
+    assert kept["github"] == "failed"
+    assert kept["text"] == "for the PR"
+    assert kept["error"]
+
+    # Retrying takes everything still owed without being told which, which is what makes a failure recoverable.
+    again = desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1})
+    assert again["owed"] >= 1
+    assert {row["seq"]: row for row in desk.get("/comments")}[made["seqs"][0]]["github"] == "failed"
+    # A sequence nobody owes anything for is not a post at all.
+    assert desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1, "seq": [99999]}) == {
+        "ok": True,
+        "sent": 0,
+        "owed": 0,
+    }
+
+
+def test_a_comment_not_bound_for_github_is_never_offered_to_it(desk):
+    made = desk.post(
+        "/comments", [{"branch": "feature", "path": "sample.py", "line": 14, "side": "new", "text": "local"}]
+    )
+    row = {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]
+    assert row["github"] == "none"
+    # Publishing everything owed must leave a comment that was never meant for the pull request alone.
+    desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1})
+    assert {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]["github"] == "none"
 
 
 def test_the_comments_survive_as_a_readable_log(desk):

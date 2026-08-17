@@ -34,7 +34,17 @@ On the page:
   diff left out, read from the file at that branch's revision.
 - **Reviewed** folds a file away. The tick is remembered per branch and per file digest, so a file whose diff changes
   reopens itself rather than staying silently ticked.
-- **Submit review** sends the whole batch at once, with an optional overall note.
+- **Submit review** sends the whole batch at once, with an optional overall note - or send a single comment on its own
+  and keep reviewing; both take the same path.
+- **Every comment is a thread.** Either side can reply, and either side can resolve or reopen it. Resolving keeps the
+  remark and every reply; nothing is ever deleted.
+- **Edit** rewrites a comment and keeps what it said before. One already posted to a pull request is marked as having
+  moved on from what the pull request holds.
+- **Comments** in the header opens the log: every comment on the branch, whether it is open or resolved, whether it is
+  waiting for GitHub, already on the pull request, or local only. Clicking one jumps to it.
+
+A comment whose line is no longer in the diff - the branch moved on, the code was rewritten - is **kept**, marked "code
+moved on", and shown at the end of the file it belonged to. It is never resolved or deleted on your behalf.
 - **Changes only** hides context lines; **Hide reviewed** clears what you are done with; `j`/`k` walk the files, `/`
   filters them, `c` comments on the selection, `r` marks the current file reviewed.
 
@@ -45,13 +55,16 @@ arrived in. A session waits for one with:
 
     python3 desk.py watch
 
-which blocks until a batch lands, prints it as `[seq] branch path:line-endLine (side) text`, and exits. After
-addressing them:
+which blocks until a batch lands, prints each comment as `[seq] branch path:line-endLine (side) text` with its state
+and any replies, and exits. A session then answers, closes, or rewrites them:
 
-    python3 desk.py resolve 3 4 --answer "fixed in abc1234"
+    python3 desk.py reply 3 "it happens because ..."          # answer, leaving it open
+    python3 desk.py resolve 3 4 --answer "fixed in abc1234"   # answer and close
+    python3 desk.py resolve 3 --reopen                        # put one back
+    python3 desk.py edit 3 "what I actually meant ..."        # rewrite, keeping the earlier wording
 
-The page picks that up on its own and shows those comments closed, with the answer beside them. `desk.py comments`
-lists what is still outstanding.
+The page picks all of that up on its own, threading the replies under the comment. `desk.py comments` lists what is
+still outstanding, with each thread's replies and where it stands with GitHub.
 
 As a Claude Code skill, drop this repository into `~/.claude/skills/diff-desk/` and the flow above needs no
 explaining - `SKILL.md` tells the session how to serve a review, wait for comments, and close them out.
@@ -60,8 +73,17 @@ explaining - `SKILL.md` tells the session how to serve a review, wait for commen
 
 When a branch has an open pull request, the tray offers to post the batch there as well. Ranges become GitHub range
 comments; a comment covering removed and added lines is anchored on the added side, which is the side a line range can
-be expressed on. It goes out as a single review rather than a stream of separate comments, and it is always opt-in -
-comments are recorded locally whether or not GitHub is reachable, which is what makes the desk usable when it is not.
+be expressed on. It goes out as a single review rather than a stream of separate comments, and it is always opt-in.
+
+**A post that does not land loses nothing.** The comment is written to the log before GitHub is contacted, so the order
+of events is: recorded, then attempted. A comment bound for a pull request is marked `pending` until it lands and
+`failed` if it does not, keeping the reason. Either way it stays in the log, and the log panel shows exactly how many
+are waiting.
+
+What is waiting is retried three ways: the button in the log panel, on its own every few seconds while the page is
+open, and the moment the browser reports the network is back. Retrying takes everything still owed without being told
+which, so a failure needs no bookkeeping from you. A comment never meant for the pull request is left alone by all of
+it.
 
 ## Layout
 

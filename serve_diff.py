@@ -6,15 +6,30 @@ Endpoints, all on 127.0.0.1 so nothing is exposed off the machine:
   GET  /refs?dir=&base=       branches ahead of a base, for the source picker
   POST /scan                  {dir, base, refs} - regenerate the payload and return it
   GET  /comments?since=N      every recorded comment past the cursor, each with its seq and batch
-  POST /comments              a comment, or a batch of them, as submitted from the page
-  POST /resolve               {seq: [...], answer} - mark comments addressed, which the page then shows
-  POST /publish               {repo, pr, summary, comments} - post the batch to a pull request as one review
+  POST /comments              {comments: [...], github: bool} - a batch as submitted, or a bare list of comments
+  POST /edit                  {seq, text} - rewrite a comment, keeping what it said before
+  POST /reply                 {seq, text, who} - add a reply to a comment, from the session or from the reviewer
+  POST /resolve               {seq: [...], answer, resolved, who} - close comments, or reopen them
+  POST /publish               {repo, pr, summary, seq} - post those comments as one review; everything still owed
+                              when seq is omitted, which is how a post that did not land is retried
+
+A comment is a thread: the reviewer's remark plus replies from either side, each stamped with who wrote it. A reply
+leaves the thread open; only resolving closes it, either side may do so, and a resolved thread keeps its text and every
+reply - closing it hides nothing and deletes nothing. Rewriting a comment keeps every earlier wording under `edits`,
+and one already posted is flagged as having moved on from what the pull request holds rather than silently disagreeing
+with it.
+
+A comment also carries where it stands with the pull request, apart from whether it is resolved: `none` when it was
+never meant to go there, `pending` while it still owes a post, `failed` after an attempt that did not land (retriable,
+with the reason kept), `posted` once it did. The log on disk is written before GitHub is contacted, so a failed post
+loses nothing.
 """
 
 import json
 import os
 import pathlib
 import subprocess
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -38,6 +53,9 @@ def read_notes():
         row.setdefault("seq", index)
         row.setdefault("batch", 0)
         row.setdefault("state", "open")
+        row.setdefault("github", "none")
+        row.setdefault("replies", [])
+        row.setdefault("edits", [])
     return rows
 
 
@@ -114,6 +132,10 @@ class Handler(BaseHTTPRequestHandler):
             self._record()
         elif path == "/scan":
             self._scan()
+        elif path == "/edit":
+            self._edit()
+        elif path == "/reply":
+            self._reply()
         elif path == "/resolve":
             self._resolve()
         elif path == "/publish":
@@ -146,8 +168,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _record(self):
         body = self._body()
-        # A review arrives as a batch; a single comment is the batch of one.
-        batch = body if isinstance(body, list) else [body]
+        # A batch names whether it is bound for GitHub; a bare list, or a lone comment, is the batch of one.
+        if isinstance(body, dict) and "comments" in body:
+            batch, bound = body["comments"], bool(body.get("github"))
+        else:
+            batch, bound = (body if isinstance(body, list) else [body]), False
         rows = read_notes()
         seq = max((row.get("seq", 0) for row in rows), default=0)
         group = max((row.get("batch", 0) for row in rows), default=0) + 1
@@ -156,39 +181,92 @@ class Handler(BaseHTTPRequestHandler):
             note["seq"] = seq
             note["batch"] = group
             note["state"] = "open"
+            note["github"] = "pending" if bound else "none"
+            note["replies"] = []
             rows.append(note)
         write_notes(rows)
-        print(f"BATCH {group}: {len(batch)} comment(s) submitted", flush=True)
+        print(f"BATCH {group}: {len(batch)} comment(s) submitted{', bound for GitHub' if bound else ''}", flush=True)
         for note in batch:
             span = str(note.get("line", "?"))
             if note.get("endLine") and note["endLine"] != note.get("line"):
                 span += f"-{note['endLine']}"
             text = " ".join(str(note.get("text", "")).split())
             print(f"  COMMENT [{note['seq']}] {note.get('path', '?')}:{span} :: {text}", flush=True)
-        self._json({"ok": True, "batch": group, "seq": seq})
+        self._json({"ok": True, "batch": group, "seq": seq, "seqs": [note["seq"] for note in batch]})
+
+    def _edit(self):
+        """Rewrite a comment, keeping every earlier wording."""
+        order = self._body()
+        text = (order.get("text") or "").strip()
+        rows = read_notes()
+        found = next((row for row in rows if row["seq"] == order.get("seq")), None)
+        if found is None:
+            self._json({"ok": False, "error": f"no comment numbered {order.get('seq')}"})
+            return
+        if not text:
+            self._json({"ok": False, "error": "an empty comment says nothing"})
+            return
+        found["edits"].append({"at": time.strftime("%H:%M:%S"), "text": found["text"]})
+        found["text"] = text
+        if found.get("github") == "posted":
+            found["editedAfterPost"] = True
+        write_notes(rows)
+        print(f"EDIT [{found['seq']}] {' '.join(text.split())}", flush=True)
+        self._json({"ok": True, "seq": found["seq"], "edits": len(found["edits"])})
+
+    def _reply(self):
+        """Add a reply to a comment, from whichever side wrote it. A reply leaves the thread open."""
+        order = self._body()
+        text = (order.get("text") or "").strip()
+        if not text:
+            self._json({"ok": False, "error": "an empty reply says nothing"})
+            return
+        who = "you" if order.get("who") == "you" else "session"
+        rows = read_notes()
+        found = next((row for row in rows if row["seq"] == order.get("seq")), None)
+        if found is None:
+            self._json({"ok": False, "error": f"no comment numbered {order.get('seq')}"})
+            return
+        found["replies"].append({"who": who, "text": text, "at": time.strftime("%H:%M:%S")})
+        write_notes(rows)
+        print(f"REPLY [{found['seq']}] {who}: {' '.join(text.split())}", flush=True)
+        self._json({"ok": True, "seq": found["seq"], "replies": len(found["replies"])})
 
     def _resolve(self):
-        """Mark comments addressed, so the page shows what a session has already dealt with."""
+        """Close comments, or reopen them. Either side may do it, and an answer is kept as a reply of its own."""
         order = self._body()
         wanted = set(order.get("seq") or [])
-        answer = order.get("answer", "")
+        answer = (order.get("answer") or "").strip()
+        closing = bool(order.get("resolved", True))
+        who = "you" if order.get("who") == "you" else "session"
         rows = read_notes()
         touched = 0
         for row in rows:
             if row.get("seq") in wanted:
-                row["state"] = "resolved"
+                row["state"] = "resolved" if closing else "open"
                 if answer:
-                    row["answer"] = answer
+                    row["replies"].append({"who": who, "text": answer, "at": time.strftime("%H:%M:%S")})
                 touched += 1
         write_notes(rows)
-        print(f"RESOLVED {touched} comment(s)", flush=True)
-        self._json({"ok": True, "resolved": touched})
+        print(f"{'RESOLVED' if closing else 'REOPENED'} {touched} comment(s) by {who}", flush=True)
+        self._json({"ok": True, "resolved": touched, "state": "resolved" if closing else "open"})
 
     def _publish(self):
-        """Post the batch to the pull request as one review, ranges included."""
+        """Post comments to a pull request as one review, and record where each of them now stands.
+
+        Called with `seq` for a batch just submitted, and without it to clear whatever is still owed, which is what
+        makes a post that did not land recoverable rather than lost.
+        """
         order = self._body()
+        rows = read_notes()
+        wanted = set(order.get("seq") or [])
+        owed = [row for row in rows if row.get("github") in ("pending", "failed")]
+        sending = [row for row in owed if row["seq"] in wanted] if wanted else owed
+        if not sending:
+            self._json({"ok": True, "sent": 0, "owed": 0})
+            return
         review = {"event": "COMMENT", "body": order.get("summary") or "Review from the diff desk.", "comments": []}
-        for note in order.get("comments", []):
+        for note in sending:
             side = "LEFT" if note.get("side") == "old" else "RIGHT"
             comment = {
                 "path": note["path"],
@@ -210,14 +288,22 @@ class Handler(BaseHTTPRequestHandler):
             timeout=90,
             check=False,
         )
-        if done.returncode == 0:
-            url = json.loads(done.stdout or "{}").get("html_url", "")
-            print(f"PUBLISHED {url}", flush=True)
-            self._json({"ok": True, "url": url})
-        else:
-            error = " ".join((done.stderr or done.stdout).split())[:400]
-            print(f"PUBLISH FAILED {error}", flush=True)
-            self._json({"ok": False, "error": error})
+        landed = done.returncode == 0
+        url = json.loads(done.stdout or "{}").get("html_url", "") if landed else ""
+        error = "" if landed else " ".join((done.stderr or done.stdout).split())[:400]
+        marked = {note["seq"] for note in sending}
+        for row in rows:
+            if row["seq"] in marked:
+                row["github"] = "posted" if landed else "failed"
+                if landed:
+                    row["reviewUrl"] = url
+                    row.pop("error", None)
+                else:
+                    row["error"] = error
+        write_notes(rows)
+        still = len([row for row in rows if row.get("github") in ("pending", "failed")])
+        print(f"{'PUBLISHED ' + url if landed else 'PUBLISH FAILED ' + error} ({still} still owed)", flush=True)
+        self._json({"ok": landed, "url": url, "error": error, "sent": len(sending) if landed else 0, "owed": still})
 
     def log_message(self, *args):
         pass
