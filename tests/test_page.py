@@ -435,6 +435,36 @@ def test_each_recorded_batch_can_be_sent_by_itself(page, desk):
         desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})
 
 
+def test_a_comment_resolved_here_does_not_claim_the_pull_request_agrees(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [
+                {"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": "on the pr"}
+            ],
+            "github": True,
+        },
+    )
+    seq = made["seqs"][0]
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/3#review-2"}))
+    desk.post("/publish", {"repo": "someone/somewhere", "pr": 3, "seq": [seq]})
+    desk.post("/resolve", {"seq": [seq], "who": "session"})
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+
+    page.locator("#logopen").click()
+    page.wait_for_selector("#log[data-open='true']")
+    row = page.locator("#logrows .logrow").filter(has_text="on the pr").first
+    marks = row.locator(".mark").all_inner_texts()
+    # Closed here and posted there, but the thread on the pull request is not resolved - and the page must say so.
+    assert "resolved here" in marks
+    assert "on the PR" in marks
+    assert "not resolved there yet" in marks
+    assert "resolved there" not in marks
+    page.locator("#logclose").click()
+
+
 def test_the_log_says_where_every_comment_stands(page, desk):
     branch = page.evaluate("() => data.branches[0].ref")
     desk.post(

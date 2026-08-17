@@ -41,7 +41,8 @@ the thread, and close what is done - the page shows both without a reload:
     python3 ~/.claude/skills/diff-desk/desk.py edit 3 "what I actually meant ..."
 
 Reply when the answer needs discussing, resolve when it is settled - a resolved thread keeps its remark and every
-reply, and the reviewer can reopen it. `desk.py comments [--all]` lists what is outstanding. Start a fresh `watch`
+reply, and the reviewer can reopen it. Resolving a comment that was posted to a pull request also resolves its thread
+there, and says "not resolved there yet" until GitHub confirms it. `desk.py comments [--all]` lists what is outstanding. Start a fresh `watch`
 after each batch; it resumes from the current end unless given `--since N`.
 
 ## Behaviour to know

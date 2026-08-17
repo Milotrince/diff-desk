@@ -783,6 +783,12 @@
 
   const OWED = ["pending", "failed"];
 
+  // What the pull request holds about a comment, kept apart from what this desk holds: closing one here does not close
+  // it there until GitHub says so.
+  const PR_RESOLVE = { pending: "not resolved there yet", failed: "not resolved there", done: "resolved there" };
+
+  const closing = (note) => (note.github === "posted" ? PR_RESOLVE[note.prResolve] || "" : "");
+
   /* ---------- the log: what is waiting, what is on the PR, what is local only, what has moved on ---------- */
 
   function present() {
@@ -889,8 +895,10 @@
     said.textContent = note.text.split("\n")[0].slice(0, 90);
     item.append(where, said);
     for (const [label, kind] of [
-      [note.state === "resolved" ? "resolved" : "open", note.state],
+      // "resolved here" rather than "resolved": what this desk holds and what the pull request holds are two answers.
+      [note.state === "resolved" ? "resolved here" : "open", note.state],
       [note.github === "none" ? "local only" : GITHUB_MARK[note.github], note.github],
+      [closing(note), note.prResolve === "done" ? "posted" : "pending"],
       [isOutdated(note, keys) ? "code moved on" : "", "outdated"],
     ]) {
       if (!label) continue;
@@ -908,6 +916,21 @@
       if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
     });
     return item;
+  }
+
+  async function closeThere(loud) {
+    const request = branch().pr;
+    const owed = mine().filter((note) => note.github === "posted" && OWED.includes(note.prResolve));
+    if (!owed.length || !request || !notes.live) return;
+    const outcome = await post("close", { repo: data.upstream, pr: request.number });
+    if (loud) {
+      els.logresult.textContent = outcome.ok
+        ? `Resolved ${outcome.closed} thread(s) on PR #${request.number}`
+        : `Could not resolve there: ${outcome.error || "GitHub unreachable"}`;
+    }
+    await loadNotes();
+    drawLog();
+    render();
   }
 
   async function retryOwed(loud) {
@@ -1135,6 +1158,14 @@
       head.append(mark);
     }
     if (!note.pending) {
+      const there = closing(note);
+      if (there) {
+        const mark = document.createElement("span");
+        mark.className = `mark ${note.prResolve === "done" ? "posted" : "pending"}`;
+        mark.textContent = there;
+        if (note.prResolveError) mark.title = note.prResolveError;
+        head.append(mark);
+      }
       const mark = document.createElement(note.github === "posted" || !notes.live ? "span" : "button");
       mark.className = mark.tagName === "BUTTON" ? `mark ${note.github} act` : `mark ${note.github}`;
       mark.textContent = note.github === "none" ? "local only" : GITHUB_MARK[note.github] || note.github;
@@ -1210,6 +1241,8 @@
         say.value = "";
         await loadNotes();
         render();
+        // Closing it here owes a resolution on the pull request, taken as soon as it is asked for.
+        await closeThere(false);
       });
       actions.append(say, send, close);
       box.append(actions);
@@ -1995,7 +2028,10 @@
   els.logclose.addEventListener("click", () => {
     els.log.dataset.open = "false";
   });
-  els.logretry.addEventListener("click", () => retryOwed(true));
+  els.logretry.addEventListener("click", async () => {
+    await retryOwed(true);
+    await closeThere(true);
+  });
   els.logbind.addEventListener("click", async () => {
     const local = mine().filter((note) => note.github === "none");
     if (!local.length || !branch().pr) return;
@@ -2049,7 +2085,10 @@
     drawLog();
     render();
     // A post that could not be made is retried on its own, as long as the browser believes it is connected.
-    if (navigator.onLine) await retryOwed(false);
+    if (navigator.onLine) {
+      await retryOwed(false);
+      await closeThere(false);
+    }
   }, 10000);
 
   const measureHead = () => {

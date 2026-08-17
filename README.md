@@ -43,6 +43,9 @@ On the page:
   to the pull request one at a time, in whatever order suits.
 - **Every comment is a thread.** Either side can reply, and either side can resolve or reopen it. Resolving folds the
   thread to its remark alone and keeps every reply behind one click; nothing is ever deleted.
+- **Resolving one that reached the pull request resolves it there too**, by finding the thread its text opened and
+  resolving that. Until GitHub confirms it, the comment reads "resolved here" and "not resolved there yet" rather than
+  claiming agreement it does not have; a resolution that could not be made is retried like a post that did not land.
 - **Code stays code.** A fenced block keeps its indentation as a code block, backticks stay inline code, and line
   breaks stay where you put them. Pasted text is only ever text, never markup the page acts on.
 - **Edit** rewrites a comment and keeps what it said before. One already posted to a pull request is marked as having

@@ -1,5 +1,6 @@
 """The desk's endpoints: what it serves, what it records, and how a session reads the comments back out."""
 
+import concurrent.futures
 import json
 import urllib.error
 import urllib.parse
@@ -189,6 +190,79 @@ def test_a_comment_bound_for_github_waits_rather_than_being_lost(desk):
     }
 
 
+def test_closing_a_posted_comment_resolves_its_thread_on_the_pull_request(desk):
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [{"branch": "feature", "path": "sample.py", "line": 16, "side": "new", "text": "close me"}],
+            "github": True,
+        },
+    )
+    seq = made["seqs"][0]
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/3#review-1"}))
+    assert desk.post("/publish", {"repo": "someone/somewhere", "pr": 3, "seq": [seq]})["ok"]
+
+    # Closing it here owes a resolution there, which is tracked apart from whether it was posted.
+    desk.post("/resolve", {"seq": [seq], "who": "you"})
+    rows = {row["seq"]: row for row in desk.get("/comments")}
+    assert rows[seq]["state"] == "resolved"
+    assert rows[seq]["prResolve"] == "pending"
+
+    # Unreachable: it stays owed with its reason, and nothing pretends the pull request agrees.
+    desk.github_answers(code=1, err="dial tcp: lookup api.github.com: no such host")
+    outcome = desk.post("/close", {"repo": "someone/somewhere", "pr": 3})
+    assert outcome["ok"] is False
+    assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "failed"
+
+    # The thread that holds our comment is the one resolved, found by the body this desk posted.
+    threads = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {
+                                "id": "T_other",
+                                "isResolved": False,
+                                "comments": {"nodes": [{"body": "someone else's remark", "path": "sample.py"}]},
+                            },
+                            {
+                                "id": "T_ours",
+                                "isResolved": False,
+                                "comments": {"nodes": [{"body": "close me", "path": "sample.py"}]},
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    desk.github_answers(
+        rules=[
+            {"match": "reviewThreads", "out": json.dumps(threads)},
+            {"match": "resolveReviewThread", "out": json.dumps({"data": {"resolveReviewThread": {}}})},
+        ]
+    )
+    landed = desk.post("/close", {"repo": "someone/somewhere", "pr": 3})
+    assert landed["ok"] is True
+    assert landed["closed"] == 1
+    assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "done"
+
+    # Reopening it here owes nothing there again.
+    desk.post("/resolve", {"seq": [seq], "resolved": False, "who": "you"})
+    assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "none"
+
+
+def test_closing_a_comment_that_never_reached_the_pull_request_owes_it_nothing(desk):
+    made = desk.post(
+        "/comments", [{"branch": "feature", "path": "sample.py", "line": 17, "side": "new", "text": "here only"}]
+    )
+    desk.post("/resolve", {"seq": [made["seq"]], "who": "session"})
+    row = {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]
+    assert row["state"] == "resolved"
+    assert row["prResolve"] == "none"
+
+
 def test_a_comment_github_rejects_is_kept_and_not_retried(desk):
     made = desk.post(
         "/comments",
@@ -219,6 +293,37 @@ def test_a_comment_not_bound_for_github_is_never_offered_to_it(desk):
     desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/1#pullrequestreview-44"}))
     desk.post("/publish", {"repo": "someone/somewhere", "pr": 1})
     assert {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]["github"] == "none"
+
+
+def test_comments_recorded_at_the_same_time_all_survive(desk):
+    # Every change rewrites the whole log, so two at once used to write each other away and lose what was in between.
+    before = {row["seq"] for row in desk.get("/comments")}
+    made = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as crowd:
+        for outcome in crowd.map(
+            lambda n: desk.post(
+                "/comments",
+                [{"branch": "feature", "path": "sample.py", "line": 20 + n, "side": "new", "text": f"at once {n}"}],
+            ),
+            range(16),
+        ):
+            made.append(outcome["seq"])
+    after = {row["seq"]: row for row in desk.get("/comments")}
+    assert len(set(made)) == 16
+    assert set(made) <= set(after)
+    assert before <= set(after)
+    # Numbering under concurrency is not ordered by who asked first; what matters is that every one is there, once.
+    assert sorted(after[seq]["text"] for seq in made) == sorted(f"at once {n}" for n in range(16))
+
+
+def test_replies_added_at_the_same_time_all_survive(desk):
+    made = desk.post(
+        "/comments", [{"branch": "feature", "path": "sample.py", "line": 19, "side": "new", "text": "busy"}]
+    )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as crowd:
+        list(crowd.map(lambda n: desk.post("/reply", {"seq": made["seq"], "text": f"reply {n}"}), range(12)))
+    row = {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]
+    assert sorted(reply["text"] for reply in row["replies"]) == sorted(f"reply {n}" for n in range(12))
 
 
 def test_the_comments_survive_as_a_readable_log(desk):
