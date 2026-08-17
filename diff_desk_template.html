@@ -375,6 +375,8 @@
   .thread.draft { background: transparent; border-left-style: dashed; }
   .thread.draft .who { color: var(--accent); }
   .thread.done { background: var(--add-bg); border-left-color: var(--add-gutter); }
+  .thread.folded { padding: 4px 10px; }
+  .thread.folded .said { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
   .thread.done > .line:first-child .said { color: var(--muted); }
   .thread .reply { padding-left: 10px; border-left: 1px solid var(--rule-strong); }
   .thread .reply.session .who { color: var(--accent); }
@@ -630,6 +632,8 @@
   const sel = { path: null, from: null, to: null };
   let seen = {};
   let folded = new Set();
+  // Resolved threads are folded away by default; opening one is a per-view choice, not a state worth remembering.
+  const unfolded = new Set();
 
   const els = {};
   for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logclose", "logresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
@@ -899,9 +903,11 @@
     row.id = `note-${note.seq || "draft"}`;
     const cell = document.createElement("td");
     cell.colSpan = 5;
+    const settled = note.state === "resolved" && !unfolded.has(note.seq);
     const box = document.createElement("div");
     box.className = note.pending ? "thread draft" : note.state === "resolved" ? "thread done" : "thread";
     if (note.outdated) box.classList.add("stale");
+    if (settled) box.classList.add("folded");
 
     const head = document.createElement("div");
     head.className = "line";
@@ -912,6 +918,26 @@
     text.className = "said";
     text.textContent = note.text;
     head.append(who, text);
+    if (note.state === "resolved") {
+      const turn = document.createElement("button");
+      turn.className = "tiny";
+      const answers = (note.replies || []).length;
+      turn.textContent = settled ? `resolved${answers ? `, ${answers} repl${answers === 1 ? "y" : "ies"}` : ""}` : "fold";
+      turn.title = settled ? "Show the whole thread" : "Fold it away again";
+      turn.addEventListener("click", () => {
+        if (settled) unfolded.add(note.seq);
+        else unfolded.delete(note.seq);
+        render();
+      });
+      head.append(turn);
+    }
+    if (settled) {
+      // Folded: the remark and its standing, nothing else. Everything it holds is one click away, never discarded.
+      box.append(head);
+      cell.append(box);
+      row.append(cell);
+      return row;
+    }
     if (note.pending || notes.live) {
       const change = document.createElement("button");
       change.className = "tiny";

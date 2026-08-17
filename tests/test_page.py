@@ -180,6 +180,15 @@ def test_a_thread_can_be_answered_rewritten_closed_and_reopened_from_the_page(pa
     page.locator(f"#note-{seq} button.solid").filter(has_text="Resolve").click()
     page.wait_for_timeout(400)
     assert {row["seq"]: row for row in desk.get("/comments")}[seq]["state"] == "resolved"
+    # A resolved thread folds to its remark alone: its replies and its actions are one click away, never discarded.
+    folded = page.locator(f"#note-{seq} .thread.folded")
+    assert folded.count() == 1
+    assert page.locator(f"#note-{seq} .reply").count() == 0
+    assert page.locator(f"#note-{seq} textarea").count() == 0
+    page.locator(f"#note-{seq} button.tiny").filter(has_text="resolved").click()
+    page.wait_for_timeout(200)
+    assert page.locator(f"#note-{seq} .thread.folded").count() == 0
+    assert page.locator(f"#note-{seq} .reply").count() == 1
     page.locator(f"#note-{seq} button.ghost").filter(has_text="Reopen").click()
     page.wait_for_timeout(400)
     reopened = {row["seq"]: row for row in desk.get("/comments")}[seq]

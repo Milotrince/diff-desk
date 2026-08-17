@@ -37,8 +37,8 @@ On the page:
 - **Send** in the comment box posts that one comment immediately; **Add to review** keeps it for a batch that goes out
   together with **Submit review** and an optional overall note. Both take the same path, so a lone comment is recorded,
   threaded and posted exactly like a batch.
-- **Every comment is a thread.** Either side can reply, and either side can resolve or reopen it. Resolving keeps the
-  remark and every reply; nothing is ever deleted.
+- **Every comment is a thread.** Either side can reply, and either side can resolve or reopen it. Resolving folds the
+  thread to its remark alone and keeps every reply behind one click; nothing is ever deleted.
 - **Edit** rewrites a comment and keeps what it said before. One already posted to a pull request is marked as having
   moved on from what the pull request holds.
 - **Comments** in the header opens the log: every comment on the branch, whether it is open or resolved, whether it is

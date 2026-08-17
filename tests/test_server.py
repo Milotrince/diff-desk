@@ -8,6 +8,7 @@ import urllib.request
 import pytest
 
 from conftest import FILE_LINES, SECOND_EDIT
+from serve_diff import is_refusal
 
 
 def read(desk, route):
@@ -136,6 +137,16 @@ def test_rewriting_a_comment_keeps_what_it_said_before(desk):
     assert desk.post("/edit", {"seq": made["seq"], "text": " "})["ok"] is False
 
 
+def test_a_refusal_is_told_apart_from_a_failure_worth_retrying():
+    # What GitHub says when it rejects the comment itself, against what it says when the attempt simply did not happen.
+    assert is_refusal("gh: Unprocessable Entity (HTTP 422)")
+    assert is_refusal("gh: Not Found (HTTP 404)")
+    assert is_refusal("gh: Forbidden (HTTP 403)")
+    assert not is_refusal("dial tcp: lookup api.github.com: no such host")
+    assert not is_refusal("gh: Internal Server Error (HTTP 500)")
+    assert not is_refusal("context deadline exceeded")
+
+
 def test_a_comment_bound_for_github_waits_rather_than_being_lost(desk):
     made = desk.post(
         "/comments",
@@ -147,19 +158,22 @@ def test_a_comment_bound_for_github_waits_rather_than_being_lost(desk):
     rows = {row["seq"]: row for row in desk.get("/comments")}
     assert rows[made["seqs"][0]]["github"] == "pending"
 
-    # A repository that cannot take it stands in for every way a post fails: no network, no permission, wrong slug.
+    # A repository that does not exist is a rejection GitHub owns, so the comment is kept with its reason and not
+    # attempted again - while still being in the log, which is the whole point.
     outcome = desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1, "seq": made["seqs"]})
     assert outcome["ok"] is False
     assert outcome["sent"] == 0
     kept = {row["seq"]: row for row in desk.get("/comments")}[made["seqs"][0]]
-    assert kept["github"] == "failed"
+    assert kept["github"] == "refused"
     assert kept["text"] == "for the PR"
     assert kept["error"]
 
-    # Retrying takes everything still owed without being told which, which is what makes a failure recoverable.
+    # A sweep of what is still owed leaves a refusal alone rather than attempting it forever.
     again = desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1})
-    assert again["owed"] >= 1
-    assert {row["seq"]: row for row in desk.get("/comments")}[made["seqs"][0]]["github"] == "failed"
+    assert made["seqs"][0] not in {
+        row["seq"] for row in desk.get("/comments") if row["github"] in ("pending", "failed")
+    }
+    assert again["owed"] == len([row for row in desk.get("/comments") if row["github"] in ("pending", "failed")])
     # A sequence nobody owes anything for is not a post at all.
     assert desk.post("/publish", {"repo": "duburcqa/no-such-repo-at-all", "pr": 1, "seq": [99999]}) == {
         "ok": True,

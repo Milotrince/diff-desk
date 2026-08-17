@@ -59,6 +59,15 @@ def read_notes():
     return rows
 
 
+def is_refusal(error):
+    """Whether GitHub rejected the comment itself - a line outside the diff, a request that is gone, no permission.
+
+    Retrying cannot cure any of those, so such a comment is kept with its reason rather than attempted on every sweep.
+    Anything else - unreachable, timed out, a server error - stays owed and is tried again.
+    """
+    return any(code in error for code in ("HTTP 401", "HTTP 403", "HTTP 404", "HTTP 422"))
+
+
 def write_notes(rows):
     NOTES.write_text("".join(json.dumps(row) + "\n" for row in rows))
 
@@ -291,9 +300,7 @@ class Handler(BaseHTTPRequestHandler):
         landed = done.returncode == 0
         url = json.loads(done.stdout or "{}").get("html_url", "") if landed else ""
         error = "" if landed else " ".join((done.stderr or done.stdout).split())[:400]
-        # A rejection of the comment itself - a line outside the diff, a pull request that is gone, no permission -
-        # cannot be cured by trying again, so it is kept with its reason rather than retried forever.
-        refused = not landed and any(code in error for code in ("HTTP 422", "HTTP 404", "HTTP 403", "HTTP 401"))
+        refused = not landed and is_refusal(error)
         marked = {note["seq"] for note in sending}
         for row in rows:
             if row["seq"] in marked:
