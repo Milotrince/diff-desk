@@ -16,9 +16,14 @@ Run in the background, then give the user the URL:
 
     python3 ~/.claude/skills/diff-desk/desk.py serve --dir <repo> --base <ref> [refs ...]
 
-Omit `refs` to offer every local branch ahead of the base. `--base` defaults to `upstream/main`. The checked-out
-branch is shown with its uncommitted work included. Re-running while a desk is already up just rebuilds the page.
-The user can also switch repository, base and branches from the page's own Source panel.
+`refs` are local branches, pull request numbers (`3243`, `#3243`, `pr/3243`), or a mix of both; omit them to offer
+every local branch ahead of the base. `--base` defaults to `upstream/main`. The checked-out branch is shown with its
+uncommitted work included. A pull request is fetched from the upstream repository by number into
+`refs/diffdesk/pull/<number>`, so the fork and branch it lives on never have to be named. Re-running while a desk is
+already up just rebuilds the page. The user can also switch repository, base, branches and pull requests from the
+page's own Source panel.
+
+`desk.py refs --dir <repo> --base <ref>` lists what is available: branches ahead of the base, and open pull requests.
 
 ## Picking up the comments
 

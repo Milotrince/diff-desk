@@ -60,7 +60,8 @@ def serve(args):
     print(f"{files} file diffs across {len(payload['branches'])} branch(es), base {payload['base']}")
     for entry in payload["branches"]:
         request = entry["pr"]
-        print(f"  {entry['ref']}: {len(entry['files'])} files{f' -> PR #{request['number']}' if request else ''}")
+        named = f" -> PR #{request['number']} {request['title']}" if request else ""
+        print(f"  {entry['ref']}: {len(entry['files'])} files{named}")
     if ask("/data") is not None:
         print(f"already serving, page rebuilt: {URL}")
         return
@@ -113,13 +114,20 @@ def refs(args):
     print(f"{args.dir} on {info['current']}, upstream {info['upstream'] or '(none)'}")
     for row in info["refs"]:
         print(f"  {row['ref']}  {row['ahead']} commit(s) ahead of {args.base}")
+    for row in info.get("pulls") or []:
+        print(f"  #{row['number']}  {row['title']}")
 
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 jobs = parser.add_subparsers(dest="job", required=True)
 
 job = jobs.add_parser("serve", help="collect the diffs and serve the review page")
-job.add_argument("refs", nargs="*", help="refs to review; every branch ahead of the base when omitted")
+job.add_argument(
+    "refs",
+    nargs="*",
+    help="branches to review, or pull requests as numbers (3243, #3243, pr/3243); every branch ahead of the base "
+    "when omitted",
+)
 job.add_argument("--dir", default=".", help="the repository to read")
 job.add_argument("--base", default="upstream/main", help="the ref to diff against")
 job.set_defaults(run=serve)
@@ -139,7 +147,7 @@ job.add_argument("seq", nargs="+", type=int)
 job.add_argument("--answer", default="", help="a short note shown next to the comment on the page")
 job.set_defaults(run=resolve)
 
-job = jobs.add_parser("refs", help="the branches ahead of a base")
+job = jobs.add_parser("refs", help="the branches ahead of a base, and the open pull requests")
 job.add_argument("--dir", default=".")
 job.add_argument("--base", default="upstream/main")
 job.set_defaults(run=refs)

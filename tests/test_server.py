@@ -34,6 +34,13 @@ def test_branches_are_offered_for_the_picker(desk):
     assert info["refs"] == [{"ref": "feature", "ahead": 1}]
 
 
+def test_pull_requests_are_offered_beside_the_branches(desk):
+    info = desk.get(f"/refs?dir={urllib.parse.quote(str(desk.repo))}&base=main")
+    # A repository with no GitHub remote has no pull requests to offer, and says so rather than omitting the key.
+    assert info["pulls"] == []
+    assert info["upstream"] == ""
+
+
 def test_a_slice_of_the_file_fills_a_gap(desk):
     where = f"/lines?dir={urllib.parse.quote(str(desk.repo))}&rev=feature&path=sample.py&from=20&to=24"
     answer = desk.get(where)

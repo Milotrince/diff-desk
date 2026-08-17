@@ -1,5 +1,7 @@
 """What the collector makes of a range: the rows, the numbers they carry, and what a page is handed."""
 
+import pytest
+
 import gen_diff_data
 from conftest import FILE_LINES, FIRST_EDIT, SECOND_EDIT
 
@@ -43,6 +45,29 @@ def test_the_digest_follows_the_hunks(repo, payload):
 def test_branches_ahead_of_the_base_are_offered(repo):
     assert gen_diff_data.ahead_refs(str(repo), "main") == [{"ref": "feature", "ahead": 1}]
     assert gen_diff_data.ahead_refs(str(repo), "feature") == []
+
+
+def test_a_pull_request_is_named_by_number_in_any_of_its_spellings():
+    assert [gen_diff_data.pull_number(text) for text in ("3243", "#3243", "pr/3243", "PR-3243", " 42 ")] == [
+        3243,
+        3243,
+        3243,
+        3243,
+        42,
+    ]
+    # A branch whose name merely contains digits is a branch, not a pull request.
+    assert [gen_diff_data.pull_number(text) for text in ("feature", "release-3.2", "pr/topic", "", "3243abc")] == [
+        None,
+        None,
+        None,
+        None,
+        None,
+    ]
+
+
+def test_a_pull_request_needs_a_github_remote_to_resolve_against(repo):
+    with pytest.raises(RuntimeError, match="#3243"):
+        gen_diff_data.collect(str(repo), "main", ["#3243"])
 
 
 def test_a_repository_without_a_remote_claims_no_upstream(repo, payload):

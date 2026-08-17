@@ -74,12 +74,15 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/refs":
             root = query.get("dir", ["."])[0]
             base = query.get("base", ["upstream/main"])[0]
+            upstream = gen_diff_data.canonical_repo(root)
+            pulls = gen_diff_data.pull_requests(root, upstream) if upstream else {}
             self._json(
                 {
                     "root": gen_diff_data.run(root, "rev-parse", "--show-toplevel").strip(),
                     "current": gen_diff_data.run(root, "rev-parse", "--abbrev-ref", "HEAD").strip(),
-                    "upstream": gen_diff_data.canonical_repo(root),
+                    "upstream": upstream,
                     "refs": gen_diff_data.ahead_refs(root, base),
+                    "pulls": sorted(pulls.values(), key=lambda row: -row["number"]),
                 }
             )
         elif path == "/lines":

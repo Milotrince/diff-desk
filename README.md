@@ -14,9 +14,17 @@ It needs `git`, `gh` and python3. Nothing else - no build step, no packages, no 
 
     python3 desk.py serve --dir /path/to/repo --base upstream/main [refs ...]
 
-Omit the refs to be offered every local branch ahead of the base. The checked-out branch is shown with its
-uncommitted work included, so a review can start before a commit exists. Repository, base and branches can also be
-switched from the page's own Source panel, without restarting anything.
+What can be reviewed:
+
+- **Local branches.** Omit the refs entirely to be offered every local branch ahead of the base. The checked-out
+  branch is shown with its uncommitted work included, so a review can start before a commit exists.
+- **Pull requests, by number** - `3243`, `#3243` or `pr/3243`. The head is fetched from the upstream repository by
+  number, so neither the fork it lives on nor the branch name it uses has to be known, and a head force-pushed since
+  the last look is picked up. It lands in `refs/diffdesk/pull/<number>`, out of the way of your own branches.
+
+Both can be reviewed side by side in one desk, as tabs. Repository, base, branches and pull requests can also be
+switched from the page's own Source panel, without restarting anything - it lists the branches ahead of the base and
+every open pull request, filterable together.
 
 On the page:
 
@@ -60,7 +68,7 @@ comments are recorded locally whether or not GitHub is reachable, which is what 
 | file | what it is |
 | --- | --- |
 | `desk.py` | the entry point: `serve`, `watch`, `comments`, `resolve`, `refs` |
-| `gen_diff_data.py` | turns a git range into the payload a page renders, digests included |
+| `gen_diff_data.py` | turns a git range into the payload a page renders: hunks, digests, pull request resolution |
 | `serve_diff.py` | the local server: the page, rescans, file slices, comments, resolutions, pull request posts |
 | `diff_desk_template.html` | the page itself, with `__DIFF_DATA__` and `__BUILD__` substituted at build time |
 | `SKILL.md` | how a Claude Code session drives all of the above |

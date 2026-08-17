@@ -409,7 +409,9 @@
   }
   .source .refs { display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow-y: auto; }
   .source .refs label { flex-direction: row; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; color: var(--ink); }
-  .source .refs .ahead { margin-left: auto; color: var(--faint); font-size: 11px; }
+  .source .refs .ahead { margin-left: auto; color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .source .pulls { border-top: 1px solid var(--rule); padding-top: 6px; }
+  .source .pulls > .label { color: var(--faint); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
   .source .row { display: flex; align-items: center; gap: 8px; }
 
   .stamp { color: var(--faint); }
@@ -445,8 +447,9 @@
     <div class="body">
       <label>Repository<input id="srcdir" type="text" spellcheck="false" placeholder="/path/to/checkout" /></label>
       <label>Base<input id="srcbase" type="text" spellcheck="false" placeholder="upstream/main" /></label>
-      <input id="srcfilter" type="text" spellcheck="false" placeholder="Filter branches" />
+      <input id="srcfilter" type="text" spellcheck="false" placeholder="Filter branches and pull requests" />
       <div class="refs" id="srcrefs"></div>
+      <div class="refs pulls" id="srcpulls"></div>
       <div class="row">
         <button class="solid" id="srcscan">Rescan</button>
         <span class="status" id="srcstatus"></span>
@@ -508,7 +511,7 @@
   let seen = {};
 
   const els = {};
-  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcscan", "srcstatus"]) {
+  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
     els[id] = document.getElementById(id);
   }
 
@@ -929,7 +932,7 @@
 
   /* ---------- picking what to review ---------- */
 
-  const source = { refs: [], current: "", picked: new Set() };
+  const source = { refs: [], pulls: [], current: "", picked: new Set() };
 
   async function loadRefs() {
     els.srcstatus.textContent = "reading branches...";
@@ -937,15 +940,19 @@
     try {
       const info = await (await fetch(where, { cache: "no-store" })).json();
       source.refs = info.refs;
+      source.pulls = info.pulls || [];
       source.current = info.current;
       source.picked = new Set(data.branches.map((entry) => entry.ref));
       drawRefs();
-      els.srcstatus.textContent = info.refs.length
-        ? `${info.refs.length} ahead of ${els.srcbase.value}${info.upstream ? ` \u00b7 ${info.upstream}` : ""}`
-        : `nothing ahead of ${els.srcbase.value}`;
+      const counted = [`${info.refs.length} ahead of ${els.srcbase.value}`];
+      if (source.pulls.length) counted.push(`${source.pulls.length} open PR${source.pulls.length === 1 ? "" : "s"}`);
+      if (info.upstream) counted.push(info.upstream);
+      els.srcstatus.textContent = counted.join(" \u00b7 ");
     } catch (error) {
       source.refs = [];
+      source.pulls = [];
       els.srcrefs.innerHTML = "";
+      els.srcpulls.innerHTML = "";
       els.srcstatus.textContent = "needs the local server";
     }
   }
@@ -972,6 +979,35 @@
         ahead.textContent = `${row.ahead} commit${row.ahead === 1 ? "" : "s"}`;
         label.append(box, name, ahead);
         els.srcrefs.append(label);
+      }
+      els.srcpulls.innerHTML = "";
+      const wanted = source.pulls.filter(
+        (row) => !query || `#${row.number} ${row.title} ${row.headRefName}`.toLowerCase().includes(query),
+      );
+      if (wanted.length) {
+        const title = document.createElement("span");
+        title.className = "label";
+        title.textContent = "Pull requests";
+        els.srcpulls.append(title);
+      }
+      for (const row of wanted) {
+        const label = document.createElement("label");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.value = `#${row.number}`;
+        box.checked = source.picked.has(box.value);
+        box.addEventListener("change", () => {
+          if (box.checked) source.picked.add(box.value);
+          else source.picked.delete(box.value);
+        });
+        const name = document.createElement("span");
+        name.textContent = `#${row.number}`;
+        const what = document.createElement("span");
+        what.className = "ahead";
+        what.textContent = row.title;
+        label.title = `${row.title} (${row.headRefName})`;
+        label.append(box, name, what);
+        els.srcpulls.append(label);
       }
   }
 

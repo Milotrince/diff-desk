@@ -42,6 +42,48 @@ def canonical_repo(root):
     return ""
 
 
+PULL = re.compile(r"^(?:#|pr[/-])?(\d+)$", re.IGNORECASE)
+
+
+def pull_number(ref):
+    """The pull request a ref names, when it names one rather than a branch."""
+    match = PULL.match(str(ref).strip())
+    return int(match.group(1)) if match else None
+
+
+def fetch_pull(root, upstream, number):
+    """Bring a pull request's head into a local ref, and describe it.
+
+    Fetched by number through the upstream repository, so neither the fork it lives on nor the branch name it uses has
+    to be known, and a head force-pushed since the last look is picked up.
+    """
+    if not upstream:
+        raise RuntimeError(f"#{number} needs a GitHub remote to resolve against, and this repository has none")
+    seen = subprocess.run(
+        ["gh", "pr", "view", str(number), "--repo", upstream, "--json", "number,title,url,headRefName,baseRefName"],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        timeout=60,
+        check=False,
+    )
+    if seen.returncode != 0:
+        raise RuntimeError(f"#{number} could not be read from {upstream}: {' '.join(seen.stderr.split())[:200]}")
+    request = json.loads(seen.stdout)
+    local = f"refs/diffdesk/pull/{number}"
+    brought = subprocess.run(
+        ["git", "fetch", "--quiet", f"https://github.com/{upstream}.git", f"+refs/pull/{number}/head:{local}"],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        timeout=300,
+        check=False,
+    )
+    if brought.returncode != 0:
+        raise RuntimeError(f"#{number} could not be fetched: {' '.join(brought.stderr.split())[:200]}")
+    return local, request
+
+
 def render_page(template, payload):
     """The page as served: the payload inlined, stamped with the moment it was built so a stale tab is obvious."""
     body = json.dumps(payload, separators=(",", ":")).replace("</script", "<\\/script")
@@ -156,7 +198,12 @@ def collect(root, base, refs, upstream=None):
         "upstream": upstream,
         "branches": [],
     }
-    for ref in refs:
+    for wanted in refs:
+        number = pull_number(wanted)
+        request = None
+        ref = wanted
+        if number is not None:
+            ref, request = fetch_pull(root, upstream, number)
         commits = []
         log = run(root, "log", "--format=%h%x1f%s", f"{base}..{ref}").strip().split("\n")
         for row in reversed([line for line in log if line]):
@@ -177,8 +224,8 @@ def collect(root, base, refs, upstream=None):
         data["branches"].append(
             {
                 "ref": ref,
-                "blurb": ref.split("/")[-1].replace("_", " "),
-                "pr": requests.get(ref),
+                "blurb": f"#{number}" if number else ref.split("/")[-1].replace("_", " "),
+                "pr": request or requests.get(ref),
                 "tip": run(root, "rev-parse", "--short", ref).strip(),
                 # Empty means the working tree, which is what the checked-out branch is shown as.
                 "rev": "" if ref == current else ref,

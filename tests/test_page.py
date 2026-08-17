@@ -190,6 +190,21 @@ def test_expanding_every_gap_reaches_the_whole_file(page):
     assert shown["lines"] >= SECOND_EDIT
 
 
+def test_the_source_panel_lists_what_can_be_reviewed(page):
+    page.locator("#source > summary").click()
+    page.wait_for_selector("#srcrefs label")
+    listed = page.locator("#srcrefs label")
+    assert listed.count() >= 1
+    assert "feature" in listed.first.inner_text()
+    # The branch under review is already ticked, so a rescan does not silently drop it.
+    assert listed.first.locator("input").is_checked()
+    # Pull requests are listed only where there are any, so a plain local repository shows branches alone.
+    assert page.locator("#srcpulls label").count() == 0
+    page.locator("#srcfilter").fill("nothing matches this")
+    assert page.locator("#srcrefs label").count() == 1
+    page.locator("#srcfilter").fill("")
+
+
 @pytest.mark.parametrize("width", [1500, 1000, 760])
 def test_the_pinned_file_head_clears_the_page_header(page, width):
     page.set_viewport_size({"width": width, "height": 900})
