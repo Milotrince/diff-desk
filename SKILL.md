@@ -53,7 +53,9 @@ after each batch; it resumes from the current end unless given `--since N`.
   running (they are hidden otherwise).
 - Comments are recorded whether or not GitHub is reachable; posting to a pull request is a separate opt-in tick. A
   post that does not land leaves its comments marked as still owed, with the reason kept, and they are retried from the
-  page - so a GitHub outage never costs a comment and never needs cleaning up by hand.
+  page - so a GitHub outage never costs a comment and never needs cleaning up by hand. A comment GitHub rejects outright
+  is marked `refused` rather than retried forever.
+- A comment can be sent on its own from the box or batched into a review; both are recorded and threaded identically.
 - A comment whose line has left the diff is kept and marked, never resolved or dropped on the reviewer's behalf.
 
 ## Changing the page

@@ -20,9 +20,9 @@ and one already posted is flagged as having moved on from what the pull request 
 with it.
 
 A comment also carries where it stands with the pull request, apart from whether it is resolved: `none` when it was
-never meant to go there, `pending` while it still owes a post, `failed` after an attempt that did not land (retriable,
-with the reason kept), `posted` once it did. The log on disk is written before GitHub is contacted, so a failed post
-loses nothing.
+never meant to go there, `pending` while it still owes a post, `failed` after an attempt worth trying again, `refused`
+when GitHub rejected the comment itself and retrying cannot help, `posted` once it landed. A failure and a refusal both
+keep their reason. The log on disk is written before GitHub is contacted, so a post that does not land loses nothing.
 """
 
 import json
@@ -291,10 +291,13 @@ class Handler(BaseHTTPRequestHandler):
         landed = done.returncode == 0
         url = json.loads(done.stdout or "{}").get("html_url", "") if landed else ""
         error = "" if landed else " ".join((done.stderr or done.stdout).split())[:400]
+        # A rejection of the comment itself - a line outside the diff, a pull request that is gone, no permission -
+        # cannot be cured by trying again, so it is kept with its reason rather than retried forever.
+        refused = not landed and any(code in error for code in ("HTTP 422", "HTTP 404", "HTTP 403", "HTTP 401"))
         marked = {note["seq"] for note in sending}
         for row in rows:
             if row["seq"] in marked:
-                row["github"] = "posted" if landed else "failed"
+                row["github"] = "posted" if landed else "refused" if refused else "failed"
                 if landed:
                     row["reviewUrl"] = url
                     row.pop("error", None)

@@ -59,10 +59,17 @@ def sample(page):
 def submit(page, text):
     """Write the comment, add it to the review, and send the batch: recording happens on the send, not the write."""
     page.locator("tr[data-composer='true'] textarea").fill(text)
-    page.locator("tr[data-composer='true'] button.solid").click()
+    page.locator("tr[data-composer='true'] button.solid:not(.direct)").click()
     page.wait_for_selector("#tray[data-open='true']")
     page.locator("#traysend").click()
     page.wait_for_function("() => document.getElementById('tray').dataset.open === 'false'")
+
+
+def submit_alone(page, text):
+    """Send one comment straight from the box, without it waiting in the review tray."""
+    page.locator("tr[data-composer='true'] textarea").fill(text)
+    page.locator("tr[data-composer='true'] button.solid.direct").click()
+    page.wait_for_function("() => document.querySelectorAll(\"tr[data-composer='true']\").length === 0")
 
 
 def drag(page, first, last, column):
@@ -102,7 +109,8 @@ def drag(page, first, last, column):
 @pytest.mark.parametrize("column", ["pin", "rail", "code"])
 @pytest.mark.parametrize("upward", [False, True])
 def test_dragging_lines_selects_the_range_and_opens_the_box(page, column, upward):
-    lines = rows(page)
+    # Within one file: a range belongs to a single diff, so the rows are taken from one card rather than by position.
+    lines = sample(page).locator("tr[data-line]")
     first, last = (lines.nth(9), lines.nth(2)) if upward else (lines.nth(2), lines.nth(9))
     held, kept = drag(page, first, last, column)
     assert held >= 4
@@ -179,6 +187,50 @@ def test_a_thread_can_be_answered_rewritten_closed_and_reopened_from_the_page(pa
     # Closing and reopening leave the thread exactly as it was: no reply invented, none dropped.
     assert reopened["text"] == "the remark, rewritten"
     assert [reply["text"] for reply in reopened["replies"]] == ["a reply from the reviewer"]
+
+
+def test_one_comment_can_be_sent_without_a_batch(page, desk):
+    line = sample(page).locator("tr.a[data-line]").first
+    where = int(line.get_attribute("data-line"))
+    line.locator("td.code").first.hover()
+    line.locator("button.pin").first.click()
+    before = len(desk.get("/comments"))
+    submit_alone(page, "sent straight from the box")
+    page.wait_for_timeout(300)
+    rows = desk.get("/comments")
+    # Recorded on its own, and the tray is never involved.
+    assert len(rows) == before + 1
+    assert rows[-1]["text"] == "sent straight from the box"
+    assert rows[-1]["line"] == where
+    assert page.locator("#tray[data-open='true']").count() == 0
+
+
+def test_the_file_list_follows_the_folders(page):
+    folders = page.locator("#filelist .folder")
+    assert folders.count() >= 1
+    names = [name.strip() for name in page.locator("#filelist .foldername .name").all_inner_texts()]
+    # A chain of single-child directories is one row, so a deep path does not cost a level of nesting per segment.
+    assert "pkg/sub" in names
+    shelf = page.locator("#filelist .folder").filter(has=page.locator(".foldername", has_text="pkg/sub")).first
+    assert shelf.get_attribute("data-open") == "true"
+    inside = shelf.locator(".fileitem")
+    assert inside.count() >= 1
+    # A folder folds away, and stays folded across reloads so a deep diff can be read a directory at a time.
+    shelf.locator(".foldername").first.click()
+    assert shelf.get_attribute("data-open") == "false"
+    page.reload(wait_until="load")
+    page.wait_for_selector("#filelist .folder")
+    again = page.locator("#filelist .folder").filter(has=page.locator(".foldername", has_text="pkg/sub")).first
+    assert again.get_attribute("data-open") == "false"
+    # Walking onto a file inside a folded folder reveals it rather than marking something out of sight.
+    page.keyboard.press("j")
+    page.keyboard.press("j")
+    page.wait_for_timeout(200)
+    current = page.locator("#filelist .fileitem[data-current='true']")
+    assert current.count() == 1
+    assert current.first.is_visible()
+    again.locator(".foldername").first.click()
+    page.evaluate("() => localStorage.removeItem('diffdesk.folded')")
 
 
 def test_the_log_says_where_every_comment_stands(page, desk):

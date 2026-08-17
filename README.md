@@ -34,8 +34,9 @@ On the page:
   diff left out, read from the file at that branch's revision.
 - **Reviewed** folds a file away. The tick is remembered per branch and per file digest, so a file whose diff changes
   reopens itself rather than staying silently ticked.
-- **Submit review** sends the whole batch at once, with an optional overall note - or send a single comment on its own
-  and keep reviewing; both take the same path.
+- **Send** in the comment box posts that one comment immediately; **Add to review** keeps it for a batch that goes out
+  together with **Submit review** and an optional overall note. Both take the same path, so a lone comment is recorded,
+  threaded and posted exactly like a batch.
 - **Every comment is a thread.** Either side can reply, and either side can resolve or reopen it. Resolving keeps the
   remark and every reply; nothing is ever deleted.
 - **Edit** rewrites a comment and keeps what it said before. One already posted to a pull request is marked as having
@@ -45,6 +46,9 @@ On the page:
 
 A comment whose line is no longer in the diff - the branch moved on, the code was rewritten - is **kept**, marked "code
 moved on", and shown at the end of the file it belonged to. It is never resolved or deleted on your behalf.
+- **The file list is a tree** following the repository's folders, each foldable and remembered across reloads, with a
+  count per folder. A chain of single-child directories is one row, so a deep path costs one line and not one per
+  level. Walking onto a file inside a folded folder reveals it.
 - **Changes only** hides context lines; **Hide reviewed** clears what you are done with; `j`/`k` walk the files, `/`
   filters them, `c` comments on the selection, `r` marks the current file reviewed.
 
@@ -84,6 +88,10 @@ What is waiting is retried three ways: the button in the log panel, on its own e
 open, and the moment the browser reports the network is back. Retrying takes everything still owed without being told
 which, so a failure needs no bookkeeping from you. A comment never meant for the pull request is left alone by all of
 it.
+
+A refusal is told apart from a failure: when GitHub rejects the comment itself - a line outside the diff, a pull
+request that is gone, no permission - retrying cannot help, so it is marked `refused` with its reason and left in the
+log instead of being attempted forever.
 
 ## Layout
 

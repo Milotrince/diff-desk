@@ -43,6 +43,9 @@ def repo(tmp_path_factory):
     body = [f"line {number}" for number in range(1, FILE_LINES + 1)]
     (root / "sample.py").write_text("\n".join(body) + "\n")
     (root / "kept.py").write_text("untouched\n")
+    # A file a couple of directories down, so the file list has a tree to draw and a chain to fold.
+    (root / "pkg" / "sub").mkdir(parents=True)
+    (root / "pkg" / "sub" / "deep.py").write_text("one\ntwo\nthree\n")
     git(root, "add", "-A")
     git(root, "commit", "-m", "the file under review")
     git(root, "checkout", "-q", "-b", "feature")
@@ -50,6 +53,7 @@ def repo(tmp_path_factory):
     body[SECOND_EDIT - 1] = f"line {SECOND_EDIT} rewritten"
     (root / "sample.py").write_text("\n".join(body) + "\n")
     (root / "added.py").write_text("brand new\n")
+    (root / "pkg" / "sub" / "deep.py").write_text("one\ntwo rewritten\nthree\n")
     git(root, "add", "-A")
     git(root, "commit", "-m", "rewrite two lines and add a file")
     git(root, "checkout", "-q", "main")

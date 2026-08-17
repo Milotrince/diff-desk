@@ -164,6 +164,30 @@
   aside h2 { margin: 0 0 8px 4px; }
   .filelist { display: flex; flex-direction: column; gap: 1px; }
 
+  .folder > .kids { display: none; }
+  .folder[data-open="true"] > .kids { display: block; }
+  .foldername {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 4px 6px;
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .foldername:hover { background: var(--surface-sunk); color: var(--ink); }
+  .foldername .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .foldername .num { color: var(--faint); font-family: var(--mono); font-size: 10.5px; }
+  .foldername .chev { flex: none; transition: transform 0.12s ease; }
+  .folder[data-open="false"] > .foldername .chev { transform: rotate(-90deg); }
+
   .fileitem {
     display: grid;
     grid-template-columns: auto 1fr auto;
@@ -605,6 +629,7 @@
   // side, which is what lets one range cover removed and added lines together.
   const sel = { path: null, from: null, to: null };
   let seen = {};
+  let folded = new Set();
 
   const els = {};
   for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logclose", "logresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
@@ -623,6 +648,14 @@
   const key = (path) => `${branch().ref} ${path}`;
 
   /* ---------- reviewed state, remembered and invalidated by digest ---------- */
+
+  function loadFolded() {
+    try {
+      folded = new Set(JSON.parse(localStorage.getItem("diffdesk.folded") || "[]"));
+    } catch (error) {
+      folded = new Set();
+    }
+  }
 
   function loadSeen() {
     try {
@@ -815,7 +848,7 @@
     });
   }
 
-  async function send(drafts, summary) {
+  async function sendAll(drafts, summary) {
     if (!drafts.length) return;
     const bound = els.togh.checked && Boolean(branch().pr);
     const batch = [...drafts];
@@ -848,8 +881,10 @@
   }
 
   async function submitReview() {
-    await send(notes.drafts, els.traynote.value.trim());
+    await sendAll(notes.drafts, els.traynote.value.trim());
   }
+
+  const send1 = (note) => sendAll([note], "");
 
   function notesAt(path, line, side) {
     const hit = (note) => note.branch === branch().ref && note.path === path && note.side === side && (note.endLine || note.line) === line;
@@ -1160,6 +1195,10 @@
     field.placeholder = `Comment on ${path.split("/").pop()}, ${endLine !== line ? `lines ${line}–${endLine}` : `line ${line}`}`;
     const controls = document.createElement("div");
     controls.className = "row";
+    const now = document.createElement("button");
+    now.className = "solid direct";
+    now.textContent = "Send";
+    now.title = "Send this comment on its own";
     const send = document.createElement("button");
     send.className = "solid";
     send.textContent = "Add to review";
@@ -1168,23 +1207,34 @@
     cancel.textContent = "Cancel";
     const hint = document.createElement("span");
     hint.className = "status";
-    hint.textContent = "⌘/Ctrl + Enter";
-    controls.append(send, cancel, hint);
+    hint.textContent = "\u2318/Ctrl + Enter";
+    controls.append(now, send, cancel, hint);
     box.append(field, controls);
     cell.append(box);
     row.append(cell);
     afterRow.after(row);
     field.focus();
 
+    const written = () => ({ branch: branch().ref, path, line, endLine, side, text: field.value.trim(), at: stamp() });
+
     const commit = () => {
-      const text = field.value.trim();
-      if (!text) return;
-      notes.drafts.push({ branch: branch().ref, path, line, endLine, side, text, at: stamp() });
+      if (!field.value.trim()) return;
+      notes.drafts.push(written());
       row.remove();
       clearSel();
       drawTray();
       render();
     };
+
+    // Sent on its own: recorded, posted and threaded exactly like a batch, without waiting in the tray.
+    const straight = async () => {
+      if (!field.value.trim()) return;
+      const alone = written();
+      row.remove();
+      clearSel();
+      await send1(alone);
+    };
+    now.addEventListener("click", straight);
     send.addEventListener("click", commit);
     cancel.addEventListener("click", () => {
       row.remove();
@@ -1432,17 +1482,7 @@
     showStatus(staleCount);
 
     els.filelist.innerHTML = "";
-    shown.forEach((file, index) => {
-      const item = document.createElement("button");
-      item.className = "fileitem";
-      item.dataset.done = String(seenState(file) === "done");
-      item.innerHTML = tickMark + `<span class="name"></span><span class="stat"><span class="bar"><i class="a" style="flex:${file.added}"></i><i class="d" style="flex:${file.removed}"></i></span><span class="num">${file.added + file.removed}</span></span>`;
-      const name = item.querySelector(".name");
-      name.textContent = file.path;
-      name.title = file.path;
-      item.addEventListener("click", () => jump(index));
-      els.filelist.append(item);
-    });
+    els.filelist.append(fileTree(shown));
 
     els.main.innerHTML = "";
     if (commit) {
@@ -1646,14 +1686,98 @@
     return wrap;
   }
 
+  function fileEntry(file, index) {
+    const item = document.createElement("button");
+    item.className = "fileitem";
+    item.dataset.done = String(seenState(file) === "done");
+    item.dataset.index = String(index);
+    item.innerHTML =
+      tickMark +
+      `<span class="name"></span><span class="stat"><span class="bar"><i class="a" style="flex:${file.added}"></i>` +
+      `<i class="d" style="flex:${file.removed}"></i></span><span class="num">${file.added + file.removed}</span></span>`;
+    const name = item.querySelector(".name");
+    name.textContent = file.path.split("/").pop();
+    name.title = file.path;
+    item.addEventListener("click", () => jump(index));
+    return item;
+  }
+
+  function fileTree(shown) {
+    // Directories with a single child are folded into their parent, so a deep path costs one row, not one per level.
+    const root = { folders: new Map(), files: [] };
+    shown.forEach((file, index) => {
+      const parts = file.path.split("/");
+      let node = root;
+      for (const step of parts.slice(0, -1)) {
+        if (!node.folders.has(step)) node.folders.set(step, { folders: new Map(), files: [] });
+        node = node.folders.get(step);
+      }
+      node.files.push({ file, index });
+    });
+
+    const draw = (node, name, path, depth) => {
+      const held = [name];
+      let here = node;
+      while (here.folders.size === 1 && !here.files.length) {
+        const [only] = here.folders.keys();
+        held.push(only);
+        here = here.folders.get(only);
+      }
+      const shelf = document.createElement("div");
+      shelf.className = "folder";
+      const label = document.createElement("button");
+      label.className = "foldername";
+      label.style.paddingLeft = `${6 + depth * 12}px`;
+      const inside = [...here.folders.values()].reduce((sum, child) => sum + count(child), 0) + here.files.length;
+      label.innerHTML = chevron + '<span class="name"></span><span class="num"></span>';
+      label.querySelector(".name").textContent = held.join("/");
+      label.querySelector(".num").textContent = String(inside);
+      const kids = document.createElement("div");
+      kids.className = "kids";
+      const shut = folded.has(path);
+      shelf.dataset.open = String(!shut);
+      label.addEventListener("click", () => {
+        const open = shelf.dataset.open === "true";
+        shelf.dataset.open = String(!open);
+        if (open) folded.add(path);
+        else folded.delete(path);
+        localStorage.setItem("diffdesk.folded", JSON.stringify([...folded]));
+      });
+      for (const [childName, child] of here.folders) kids.append(draw(child, childName, `${path}/${childName}`, depth + 1));
+      for (const { file, index } of here.files) {
+        const entry = fileEntry(file, index);
+        entry.style.paddingLeft = `${8 + (depth + 1) * 12}px`;
+        kids.append(entry);
+      }
+      shelf.append(label, kids);
+      return shelf;
+    };
+
+    const holder = document.createDocumentFragment();
+    for (const [name, node] of root.folders) holder.append(draw(node, name, name, 0));
+    for (const { file, index } of root.files) holder.append(fileEntry(file, index));
+    return holder;
+  }
+
+  function count(node) {
+    return [...node.folders.values()].reduce((sum, child) => sum + count(child), 0) + node.files.length;
+  }
+
+  const entries = () => [...els.filelist.querySelectorAll(".fileitem")];
+
   function markCurrent() {
-    [...els.filelist.children].forEach((node, index) => node.setAttribute("data-current", String(index === state.current)));
+    // Files sit at whatever depth the tree puts them, so the current one is found by the index it carries.
+    for (const node of entries()) node.setAttribute("data-current", String(Number(node.dataset.index) === state.current));
   }
 
   function jump(index) {
     const target = document.getElementById(`f${index}`);
     if (!target) return;
     state.current = index;
+    const entry = entries().find((node) => Number(node.dataset.index) === index);
+    for (let shelf = entry && entry.closest(".folder"); shelf; shelf = shelf.parentElement.closest(".folder")) {
+      shelf.dataset.open = "true";
+    }
     markCurrent();
     target.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -1713,7 +1837,7 @@
       els.q.focus();
       return;
     }
-    const count = els.filelist.children.length;
+    const count = entries().length;
     if (event.key === "j" && count) jump(Math.min(state.current + 1, count - 1));
     if (event.key === "k" && count) jump(Math.max(state.current - 1, 0));
     if (event.key === "c") {
@@ -1751,6 +1875,7 @@
   measureHead();
 
   loadSeen();
+  loadFolded();
   showSource();
   renderTabs();
   renderScopes();
