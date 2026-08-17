@@ -661,6 +661,54 @@ def test_the_log_says_where_every_comment_stands(page, desk):
     page.locator("#logclose").click()
 
 
+def test_a_comment_follows_the_line_it_was_written_against(page, desk):
+    card = sample(page)
+    line = card.locator("tr.a[data-line]").first
+    was = int(line.get_attribute("data-line"))
+    code = line.locator("td.code").first.inner_text()
+    line.locator("td.code").first.hover()
+    line.locator("button.pin").first.click()
+    submit(page, "about this very line")
+    page.wait_for_timeout(200)
+    note = desk.get("/comments")[-1]
+    # The line it was written against is remembered, which is what lets it be found again.
+    assert note["anchor"] == code
+    assert note["line"] == was
+
+    # The diff moves under it: the same code now sits further down, and something else holds the old line number.
+    page.evaluate(
+        """([path, code, was]) => {
+          const file = view().files.find((entry) => entry.path === path);
+          const at = file.lines.findIndex((row) => row[3] === code);
+          file.lines.splice(at, 0, ['c', 0, was, 'something inserted above'], ['c', 0, was + 1, 'and another']);
+          for (let i = at + 2; i < file.lines.length; i += 1) {
+            if (file.lines[i][0] !== 'h' && file.lines[i][2]) file.lines[i][2] += 2;
+          }
+          render();
+        }""",
+        [card.locator(".path").first.inner_text(), code, was],
+    )
+    page.wait_for_timeout(200)
+    shown = page.evaluate(
+        """() => {
+          const threads = [...document.querySelectorAll('.thread')];
+          const thread = threads.find((node) => node.textContent.includes('about this very line'));
+          if (!thread) return null;
+          // Other comments may sit between: the line this one hangs under is the nearest row above that holds code.
+          let row = thread.closest('tr').previousElementSibling;
+          while (row && !row.querySelector('td.code')) row = row.previousElementSibling;
+          if (!row) return null;
+          const marks = [...thread.querySelectorAll('.mark')].map((mark) => mark.textContent);
+          return {above: row.querySelector('td.code').textContent, marks};
+        }"""
+    )
+    # It hangs under the code it was written about, wherever that ended up, and says it moved rather than pretending.
+    assert shown is not None
+    assert shown["above"] == code
+    assert any(mark.startswith("moved from") for mark in shown["marks"])
+    assert not any(mark == "code moved on" for mark in shown["marks"])
+
+
 def test_a_comment_whose_line_left_the_diff_is_kept_and_marked(page, desk):
     branch = page.evaluate("() => data.branches[0].ref")
     desk.post(

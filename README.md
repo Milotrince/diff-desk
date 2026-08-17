@@ -68,8 +68,10 @@ On the page:
   request, or the panel's button to send every local one at once; click it again to keep a comment out. The decision
   stays changeable until it lands, so a comment written before deciding never has to be written twice.
 
-A comment whose line is no longer in the diff - the branch moved on, the code was rewritten - is **kept**, marked "code
-moved on", and shown at the end of the file it belonged to. It is never resolved or deleted on your behalf.
+A comment remembers the line it was written against, so when the diff moves under it - a fixup pushed, a rebase - it
+follows that line to wherever it went and says "moved from L<n>" rather than sitting on a line number that now holds
+something else. A comment whose line is no longer in the diff at all is **kept**, marked "code moved on", and shown at
+the end of the file it belonged to. Neither is ever resolved or deleted on your behalf.
 - **The file list is a tree** following the repository's folders, each foldable and remembered across reloads, with a
   count per folder. A chain of single-child directories is one row, so a deep path costs one line and not one per
   level. Walking onto a file inside a folded folder reveals it.
