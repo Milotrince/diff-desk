@@ -23,7 +23,8 @@ What can be reviewed:
   the last look is picked up. It lands in `refs/diffdesk/pull/<number>`, out of the way of your own branches. One
   fetched earlier stays reviewable while GitHub is unreachable: what cannot be read falls back to the head on disk.
 
-Both can be reviewed side by side in one desk, as tabs. Repository, base, branches and pull requests can also be
+Both can be reviewed side by side in one desk, as tabs. A tab whose branch has a pull request names it on hover - title
+and link - and clicking the tab you are already on opens that pull request on GitHub. Repository, base, branches and pull requests can also be
 switched from the page's own Source panel, without restarting anything - it lists the branches ahead of the base and
 every open pull request, filterable together.
 
