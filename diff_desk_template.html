@@ -789,6 +789,10 @@
 
   const OWED = ["pending", "failed"];
 
+  // Which review a request is about. One log holds every review this desk has served, so naming the pull request and
+  // the branch is what keeps a sweep for one review off another review's comments.
+  const where = () => ({ repo: data.upstream, pr: branch().pr ? branch().pr.number : null, branch: branch().ref });
+
   // What the pull request holds about a comment, kept apart from what this desk holds: closing one here does not close
   // it there until GitHub says so.
   const PR_RESOLVE = { pending: "not resolved there yet", failed: "not resolved there", done: "resolved there" };
@@ -883,13 +887,9 @@
     const request = branch().pr;
     if (!request) return;
     const local = held.filter((note) => note.github === "none").map((note) => note.seq);
-    if (local.length) await post("bind", { seq: local, github: true });
+    if (local.length) await post("bind", { seq: local, github: true, ...where() });
     els.logresult.textContent = `Sending ${held.length} to PR #${request.number}...`;
-    const outcome = await post("publish", {
-      repo: data.upstream,
-      pr: request.number,
-      seq: held.map((note) => note.seq),
-    });
+    const outcome = await post("publish", { ...where(), seq: held.map((note) => note.seq) });
     els.logresult.textContent = outcome.ok
       ? `Sent ${outcome.sent} to PR #${request.number}`
       : `Still waiting: ${outcome.error || "GitHub unreachable"}`;
@@ -937,7 +937,7 @@
     const request = branch().pr;
     if (!request || !notes.live) return;
     if (loud) els.logresult.textContent = `Syncing with PR #${request.number}...`;
-    const outcome = await post("sync", { repo: data.upstream, pr: request.number });
+    const outcome = await post("sync", where());
     if (loud) {
       els.logresult.textContent = outcome.ok
         ? `Sent ${outcome.sent}, brought back ${outcome.brought}, closed ${outcome.closed} here`
@@ -952,7 +952,7 @@
     const request = branch().pr;
     const owed = mine().filter((note) => note.github === "posted" && OWED.includes(note.prResolve));
     if (!owed.length || !request || !notes.live) return;
-    const outcome = await post("close", { repo: data.upstream, pr: request.number });
+    const outcome = await post("close", where());
     if (loud) {
       els.logresult.textContent = outcome.ok
         ? `Resolved ${outcome.closed} thread(s) on PR #${request.number}`
@@ -971,7 +971,7 @@
       return;
     }
     els.logresult.textContent = `Sending ${owed.length} to PR #${request.number}...`;
-    const outcome = await post("publish", { repo: data.upstream, pr: request.number, seq: owed.map((note) => note.seq) });
+    const outcome = await post("publish", { ...where(), seq: owed.map((note) => note.seq) });
     els.logresult.textContent = outcome.ok
       ? `Sent ${outcome.sent} to PR #${request.number}`
       : `Still waiting: ${outcome.error || "GitHub unreachable"}`;
@@ -1013,12 +1013,7 @@
     if (notes.live) recorded = await post("comments", { comments: batch, github: bound });
     if (bound && recorded && recorded.ok) {
       els.trayresult.textContent = `Posting ${batch.length} to PR #${branch().pr.number}...`;
-      const outcome = await post("publish", {
-        repo: data.upstream,
-        pr: branch().pr.number,
-        summary,
-        seq: recorded.seqs,
-      });
+      const outcome = await post("publish", { ...where(), summary, seq: recorded.seqs });
       // A post that does not land leaves the comments waiting rather than losing them; the log says so and retries.
       els.trayresult.textContent = outcome.ok
         ? `Posted to PR #${branch().pr.number}`
@@ -1205,7 +1200,7 @@
         (note.github === "none" ? "Send this one to the pull request" : "Keep this one out of the pull request");
       if (mark.tagName === "BUTTON") {
         mark.addEventListener("click", async () => {
-          await post("bind", { seq: [note.seq], github: note.github === "none" });
+          await post("bind", { seq: [note.seq], github: note.github === "none", ...where() });
           await loadNotes();
           if (note.github === "none") await retryOwed(false);
           drawLog();
@@ -2067,7 +2062,7 @@
   els.logbind.addEventListener("click", async () => {
     const local = mine().filter((note) => note.github === "none");
     if (!local.length || !branch().pr) return;
-    await post("bind", { seq: local.map((note) => note.seq), github: true });
+    await post("bind", { seq: local.map((note) => note.seq), github: true, ...where() });
     await loadNotes();
     await retryOwed(true);
   });

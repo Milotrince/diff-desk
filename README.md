@@ -123,7 +123,9 @@ log instead of being attempted forever.
 | `diff_desk_template.html` | the page itself, with `__DIFF_DATA__` and `__BUILD__` substituted at build time |
 | `SKILL.md` | how a Claude Code session drives all of the above |
 
-State lives in `~/.claude/diff-desk/` (override with `DIFF_DESK_HOME`); the port is `DIFF_DESK_PORT`.
+State lives in `~/.claude/diff-desk/` (override with `DIFF_DESK_HOME`); the port is `DIFF_DESK_PORT`. One log holds
+every review the desk has served, and each comment records which pull request it was sent to, so posting, resolving or
+syncing one review never reaches another's comments.
 
 ## Development
 

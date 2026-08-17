@@ -185,6 +185,19 @@ def agree(thread, row):
     return False, None
 
 
+def under_review(row, order):
+    """Whether a comment belongs to the review this request is about.
+
+    One log holds every review this desk has ever served, so a request naming a pull request must reach only the
+    comments of that pull request. Judged on where a comment was sent, falling back to the branch it was written on for
+    one not sent anywhere yet: without this, reviewing one pull request would post, resolve or fail the comments of
+    another - and their threads, being nowhere to be found, would be marked as owing a resolution for ever.
+    """
+    if row.get("prRepo") or row.get("prNumber"):
+        return row.get("prRepo") == order.get("repo") and row.get("prNumber") == order.get("pr")
+    return not order.get("branch") or row.get("branch") == order.get("branch")
+
+
 def owes_resolution(row):
     """Whether the pull request still owes this comment a resolution.
 
@@ -439,6 +452,9 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 row["github"] = "pending" if bound else "none"
                 row.pop("error", None)
+                if bound and order.get("repo"):
+                    # Which pull request it is now headed for, so no other review's sweep picks it up.
+                    row["prRepo"], row["prNumber"] = order["repo"], order.get("pr")
                 turned += 1
         print(f"BIND {turned} comment(s) {'towards the pull request' if bound else 'back to local only'}", flush=True)
         self._json({"ok": True, "bound": turned})
@@ -512,7 +528,7 @@ class Handler(BaseHTTPRequestHandler):
         wanted = set(order.get("seq") or [])
         with CHANGING:
             rows = read_notes()
-        owed = [row for row in rows if row.get("github") in ("pending", "failed")]
+        owed = [row for row in rows if row.get("github") in ("pending", "failed") and under_review(row, order)]
         sending = [row for row in owed if row["seq"] in wanted] if wanted else owed
         if not sending:
             self._json({"ok": True, "sent": 0, "owed": 0})
@@ -550,12 +566,15 @@ class Handler(BaseHTTPRequestHandler):
             for row in rows:
                 if row["seq"] in marked:
                     row["github"] = "posted" if landed else "refused" if refused else "failed"
+                    # Where it was sent, so a later sweep for another pull request leaves it alone.
+                    row["prRepo"], row["prNumber"] = order["repo"], order["pr"]
                     if landed:
                         row["reviewUrl"] = url
                         row.pop("error", None)
                     else:
                         row["error"] = error
-            still = len([row for row in rows if row.get("github") in ("pending", "failed")])
+            waiting = [row for row in rows if row.get("github") in ("pending", "failed")]
+            still = len([row for row in waiting if under_review(row, order)])
         print(f"{'PUBLISHED ' + url if landed else 'PUBLISH FAILED ' + error} ({still} still owed)", flush=True)
         self._json({"ok": landed, "url": url, "error": error, "sent": len(sending) if landed else 0, "owed": still})
 
@@ -568,7 +587,7 @@ class Handler(BaseHTTPRequestHandler):
         order = self._body()
         with CHANGING:
             rows = read_notes()
-        owed = [row for row in rows if owes_resolution(row)]
+        owed = [row for row in rows if owes_resolution(row) and under_review(row, order)]
         if not owed:
             self._json({"ok": True, "closed": 0, "owed": 0})
             return
@@ -608,7 +627,7 @@ class Handler(BaseHTTPRequestHandler):
                         row["prResolveError"] = trouble
                     else:
                         row.pop("prResolveError", None)
-            still = len([row for row in fresh if owes_resolution(row)])
+            still = len([row for row in fresh if owes_resolution(row) and under_review(row, order)])
         print(f"CLOSED {closed} thread(s) on the pull request ({still} still owed)", flush=True)
         self._json({"ok": still == 0, "closed": closed, "owed": still})
 
@@ -627,7 +646,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         with CHANGING:
             rows = read_notes()
-        posted = {row["seq"]: row for row in rows if row.get("github") == "posted"}
+        posted = {row["seq"]: row for row in rows if row.get("github") == "posted" and under_review(row, order)}
         theirs = {}
         for thread in threads:
             said = thread["comments"]["nodes"]
