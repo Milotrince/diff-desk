@@ -425,8 +425,11 @@ def test_each_recorded_batch_can_be_sent_by_itself(page, desk):
         assert groups.count() >= 2
         sends = page.locator("#logrows .batchhead button.tiny")
         # Every batch still holding something unposted can be sent by itself; one already on the PR offers nothing.
+        # What the panel lists by default: batches still holding something unposted and unresolved.
         pending = {
-            row["batch"] for row in desk.get("/comments") if row["branch"] == branch and row["github"] != "posted"
+            row["batch"]
+            for row in desk.get("/comments")
+            if row["branch"] == branch and row["github"] != "posted" and row["state"] != "resolved"
         }
         assert sends.count() == len(pending)
         assert "PR #7" in sends.last.inner_text()
@@ -479,6 +482,9 @@ def test_a_comment_resolved_here_does_not_claim_the_pull_request_agrees(page, de
 
     page.locator("#logopen").click()
     page.wait_for_selector("#log[data-open='true']")
+    # Settled comments are out of the listing by default, so this one is asked for.
+    page.locator("#logresolved").check()
+    page.wait_for_timeout(150)
     row = page.locator("#logrows .logrow").filter(has_text="a remark of its own").first
     marks = row.locator(".mark").all_inner_texts()
     # Closed here and posted there, but the thread on the pull request is not resolved - and the page must say so.
@@ -486,6 +492,7 @@ def test_a_comment_resolved_here_does_not_claim_the_pull_request_agrees(page, de
     assert "on the PR" in marks
     assert [mark for mark in marks if mark.startswith("not resolved there")]
     assert "resolved there" not in marks
+    page.locator("#logresolved").uncheck()
     page.locator("#logclose").click()
 
 
@@ -632,6 +639,69 @@ def test_a_review_keeps_its_comments_and_ticks_when_opened_from_another_ref(page
         desk.github_answers(code=1, err="gh: Not Found (HTTP 404)")
         desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})
         page.evaluate("() => localStorage.clear()")
+
+
+def test_the_log_reaches_a_comment_and_leaves_what_is_settled_out(page, desk):
+    card = sample(page)
+    line = card.locator("tr.a[data-line]").first
+    line.locator("td.code").first.hover()
+    line.locator("button.pin").first.click()
+    # Worded uniquely: each engine runs against the same desk, and a shared wording would find the other's row.
+    saying = f"worth reaching, number {len(desk.get('/comments')) + 1}"
+    submit(page, saying)
+    page.wait_for_timeout(200)
+    made = desk.get("/comments")[-1]["seq"]
+
+    # A file folded away still holds its comment, and the panel goes to it.
+    card.locator("input[type=checkbox]").check()
+    page.wait_for_timeout(150)
+    page.locator("#logopen").click()
+    page.wait_for_selector("#log[data-open='true']")
+    page.locator("#logrows .logrow").filter(has_text=saying).first.click()
+    # The scroll is animated, so the arrival is waited for rather than guessed at.
+    page.wait_for_function(
+        """(seq) => {
+          const thread = document.getElementById(`note-${seq}`);
+          if (!thread) return false;
+          const box = thread.getBoundingClientRect();
+          return box.top > 0 && box.bottom < window.innerHeight;
+        }""",
+        arg=made,
+        timeout=8000,
+    )
+    reached = page.evaluate(
+        """(seq) => {
+          const thread = document.getElementById(`note-${seq}`);
+          if (!thread) return null;
+          const box = thread.getBoundingClientRect();
+          return {
+            open: thread.closest('section.file').dataset.open,
+            panelShut: document.getElementById('log').dataset.open,
+            inView: box.top > 0 && box.bottom < window.innerHeight,
+          };
+        }""",
+        made,
+    )
+    assert reached is not None
+    assert reached["open"] == "true"
+    assert reached["panelShut"] == "false"
+    assert reached["inView"]
+    card.locator("input[type=checkbox]").uncheck()
+
+    # Settled here, it drops out of the listing until the listing is asked to show it.
+    desk.post("/resolve", {"seq": [made], "who": "session"})
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    page.locator("#logopen").click()
+    page.wait_for_selector("#log[data-open='true']")
+    listing = page.locator("#logrows .logrow").filter(has_text=saying)
+    assert listing.count() == 0
+    page.locator("#logresolved").check()
+    page.wait_for_timeout(200)
+    assert page.locator("#logrows .logrow").filter(has_text=saying).count() >= 1
+    page.locator("#logresolved").uncheck()
+    page.locator("#logclose").click()
+    page.evaluate("() => localStorage.clear()")
 
 
 def test_the_log_says_where_every_comment_stands(page, desk):

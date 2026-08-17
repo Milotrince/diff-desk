@@ -670,6 +670,32 @@ def test_a_file_comment_is_posted_against_the_file_and_no_line(desk):
     assert posted["line"] == 0
 
 
+def test_a_comment_settled_here_is_not_sent_unless_it_is_asked_for(desk):
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [
+                {"branch": "feature", "path": "sample.py", "line": 27, "side": "new", "text": "answered already"}
+            ],
+            "github": True,
+        },
+    )
+    seq = made["seqs"][0]
+    desk.post("/resolve", {"seq": [seq], "answer": "dealt with", "who": "session"})
+
+    # Bound for the pull request, but settled here before it went: sending leaves it alone.
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/14#review-1"}))
+    desk.post("/publish", {"repo": "someone/somewhere", "pr": 14, "branch": "feature"})
+    assert seq not in {row["seq"] for row in desk.get("/comments") if row["github"] == "posted"}
+    row = {row["seq"]: row for row in desk.get("/comments")}[seq]
+    assert row["github"] == "pending"
+
+    # Asked for, it goes.
+    landed = desk.post("/publish", {"repo": "someone/somewhere", "pr": 14, "branch": "feature", "resolved": True})
+    assert landed["ok"]
+    assert {row["seq"]: row for row in desk.get("/comments")}[seq]["github"] == "posted"
+
+
 def test_a_comment_not_bound_for_github_is_never_offered_to_it(desk):
     made = desk.post(
         "/comments", [{"branch": "feature", "path": "sample.py", "line": 14, "side": "new", "text": "local"}]
