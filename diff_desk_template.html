@@ -461,6 +461,8 @@
   }
   button.tiny:hover { color: var(--accent); border-color: var(--accent); }
   .thread.stale { border-left-style: dotted; background: var(--stale-bg); }
+  .thread.found { outline: 2px solid var(--accent); outline-offset: 1px; }
+  body.hide-done .file[data-done="true"][data-reveal="true"] { display: block; }
 
   .thread .drop { margin-left: auto; border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
   .note .drop { margin-left: auto; border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
@@ -659,6 +661,10 @@
   <div class="head">
     <strong>Comments</strong>
     <span class="status" id="logcount"></span>
+    <label class="seen" id="logshow" title="List what is resolved here, and include it when sending to the pull request">
+      <input type="checkbox" id="logresolved" />
+      <span>Show resolved</span>
+    </label>
     <button class="ghost" id="logclose">Close</button>
   </div>
   <div class="rows" id="logrows"></div>
@@ -709,7 +715,7 @@
   const unfolded = new Set();
 
   const els = {};
-  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "brand", "repo", "source", "sourceopen", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
+  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "logresolved", "brand", "repo", "source", "sourceopen", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
     els[id] = document.getElementById(id);
   }
 
@@ -840,6 +846,7 @@
     pr: branch().pr ? branch().pr.number : null,
     branch: branch().ref,
     review: review(),
+    resolved: withResolved(),
   });
 
   // What the pull request holds about a comment, kept apart from what this desk holds: closing one here does not close
@@ -877,13 +884,16 @@
     return notes.sent.filter((note) => belongs(note) && note.path !== "(review)");
   }
 
+  const withResolved = () => els.logresolved.checked;
+
   function drawLog() {
     const keys = present();
-    const rows = mine();
+    const all = mine();
+    const rows = withResolved() ? all : all.filter((note) => note.state !== "resolved");
     const owed = rows.filter((note) => OWED.includes(note.github));
     const counted = [
-      `${rows.filter((note) => note.state === "open").length} open`,
-      `${rows.filter((note) => note.state === "resolved").length} resolved`,
+      `${all.filter((note) => note.state === "open").length} open`,
+      `${all.filter((note) => note.state === "resolved").length} resolved`,
     ];
     if (owed.length) counted.push(`${owed.length} waiting for GitHub`);
     const posted = rows.filter((note) => note.github === "posted").length;
@@ -929,9 +939,30 @@
     if (!rows.length) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = "No comments on this branch yet.";
+      empty.textContent = all.length ? "Nothing open: all of it is resolved." : "No comments on this branch yet.";
       els.logrows.append(empty);
     }
+  }
+
+  function reach(note) {
+    const card = document.querySelector(`section.file[data-path="${CSS.escape(note.path)}"]`);
+    if (!card) return;
+    // A file folded away, or hidden because it is reviewed, still holds the comment: it is opened and shown for this.
+    card.dataset.open = "true";
+    card.dataset.reveal = "true";
+    els.log.dataset.open = "false";
+    const thread = document.getElementById(`note-${note.seq}`) || card;
+    for (const found of document.querySelectorAll(".thread.found")) found.classList.remove("found");
+    const box = thread.querySelector ? thread.querySelector(".thread") : null;
+    if (box) {
+      box.classList.add("found");
+      window.setTimeout(() => box.classList.remove("found"), 1600);
+    }
+    // Unfolding the card moves everything below it, so the scroll waits for that layout: otherwise it aims at the
+    // old position and lands with the thread off screen.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      thread.scrollIntoView({ behavior: "smooth", block: "center" });
+    }));
   }
 
   async function sendBatch(held) {
@@ -973,13 +1004,7 @@
       if (note.error && kind === "failed") mark.title = note.error;
       item.append(mark);
     }
-    item.addEventListener("click", () => {
-      const row = document.querySelector(
-        `tr[data-path="${CSS.escape(note.path)}"][data-side="${note.side}"][data-line="${note.endLine || note.line}"]`,
-      );
-      const card = document.getElementById(`note-${note.seq}`) || row;
-      if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
+    item.addEventListener("click", () => reach(note));
     return item;
   }
 
@@ -2305,6 +2330,10 @@
     await closeThere(true);
   });
   els.logsync.addEventListener("click", () => syncThere(true));
+  els.logresolved.addEventListener("change", () => {
+    drawLog();
+    render();
+  });
   els.logbind.addEventListener("click", async () => {
     const local = mine().filter((note) => note.github === "none");
     if (!local.length || !branch().pr) return;

@@ -11,10 +11,14 @@ Endpoints, all on 127.0.0.1 so nothing is exposed off the machine:
   POST /edit                  {seq, text} - rewrite a comment, keeping what it said before
   POST /reply                 {seq, text, who} - add a reply to a comment, from the session or from the reviewer
   POST /resolve               {seq: [...], answer, resolved, who} - close comments, or reopen them
-  POST /publish               {repo, pr, summary, seq} - post those comments as one review; everything still owed
+  POST /publish               {repo, pr, summary, seq, resolved} - post those comments as one review; everything owed
                               when seq is omitted, which is how a post that did not land is retried
   POST /close                 {repo, pr} - resolve, on the pull request, the threads of comments closed here
   POST /sync                  {repo, pr} - carry replies both ways and take the pull request's word on what is resolved
+
+A comment settled here stays here: posting and carrying replies leave it out unless the request asks for it, since a
+remark already answered has no business arriving on the pull request. Resolving a thread that is already there is a
+different matter, and always proceeds.
 
 A comment is a thread: the reviewer's remark plus replies from either side, each stamped with who wrote it. A reply
 leaves the thread open; only resolving closes it, either side may do so, and a resolved thread keeps its text and every
@@ -157,8 +161,11 @@ class Reconciled(NamedTuple):
     given: tuple | None
 
 
-def reconcile(repo, number, row, thread):
-    """Carry replies both ways for one comment, and settle its resolution against the thread."""
+def reconcile(repo, number, row, thread, carry=True):
+    """Carry replies both ways for one comment, and settle its resolution against the thread.
+
+    `carry` withholds the replies written here; whatever the pull request holds is always brought back.
+    """
     if thread is None:
         # Nothing on the pull request answers to this comment, so whatever was believed about it stands
         # uncorroborated: it is owed again rather than left claiming a resolution nobody can see.
@@ -167,7 +174,7 @@ def reconcile(repo, number, row, thread):
         )
         return Reconciled([], 0, [], False, owed)
     said = thread["comments"]["nodes"]
-    landed, going = carry_replies(repo, number, row, said)
+    landed, going = carry_replies(repo, number, row, said) if carry else ([], 0)
     settled, given = agree(thread, row)
     return Reconciled(landed, going, incoming(row, said), settled, given)
 
@@ -537,7 +544,13 @@ class Handler(BaseHTTPRequestHandler):
         wanted = set(order.get("seq") or [])
         with CHANGING:
             rows = read_notes()
-        owed = [row for row in rows if row.get("github") in ("pending", "failed") and under_review(row, order)]
+        owed = [
+            row
+            for row in rows
+            if row.get("github") in ("pending", "failed")
+            and under_review(row, order)
+            and (order.get("resolved") or row.get("state") != "resolved")
+        ]
         sending = [row for row in owed if row["seq"] in wanted] if wanted else owed
         if not sending:
             self._json({"ok": True, "sent": 0, "owed": 0})
@@ -665,8 +678,17 @@ class Handler(BaseHTTPRequestHandler):
             said = thread["comments"]["nodes"]
             if said:
                 theirs[said[0]["body"]] = thread
+        # A remark settled here withholds its replies unless asked for, but its resolution is still agreed with the pull
+        # request either way: agreeing on what is resolved is the point of a sync.
         found = {
-            seq: reconcile(order["repo"], order["pr"], row, theirs.get(row["text"])) for seq, row in posted.items()
+            seq: reconcile(
+                order["repo"],
+                order["pr"],
+                row,
+                theirs.get(row["text"]),
+                carry=bool(order.get("resolved")) or row.get("state") != "resolved",
+            )
+            for seq, row in posted.items()
         }
         sent = sum(step.sent for step in found.values())
         brought = sum(len(step.incoming) for step in found.values())
