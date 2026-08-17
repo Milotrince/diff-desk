@@ -164,6 +164,7 @@
   .progress { display: flex; align-items: center; gap: 7px; }
   .progress .track { width: 74px; height: 5px; border-radius: 3px; background: var(--rule); overflow: hidden; }
   .progress .track i { display: block; height: 100%; background: var(--add-ink); }
+  .progress .label[data-stale="true"] { color: var(--stale); }
 
   .shell { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); align-items: start; }
   @media (max-width: 900px) { .shell { grid-template-columns: minmax(0, 1fr); } }
@@ -224,6 +225,9 @@
   .fileitem:hover { background: var(--surface-sunk); }
   .fileitem[data-current="true"] { background: var(--accent-soft); }
   .fileitem[data-done="true"] .name { color: var(--faint); text-decoration: line-through; }
+  /* Read once, and changed since: the tick stands but in the colour of anything gone stale. */
+  .fileitem[data-stale="true"] .tick { opacity: 1; color: var(--stale); }
+  .fileitem[data-stale="true"] .name { color: var(--stale); }
   /* The indentation of the tree is padding on the row, so the row keeps the panel's width and the counts of every file
      line up down one edge whatever depth they sit at. */
   .fileitem { box-sizing: border-box; }
@@ -540,25 +544,16 @@
   .tray li b { color: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 600; }
   .tray .actions { display: flex; gap: 8px; }
 
-  .source { position: relative; flex: none; }
-  .source > summary {
-    list-style: none;
-    font-size: 12.5px;
-    font-weight: 600;
-    padding: 5px 11px;
-    color: var(--muted);
-    border: 1px solid var(--rule-strong);
-    border-radius: 6px;
-    background: var(--surface);
-    cursor: pointer;
+  .source {
+    position: fixed;
+    top: calc(var(--head) + 8px);
+    left: 20px;
+    z-index: 60;
+    display: none;
   }
-  .source > summary::-webkit-details-marker { display: none; }
-  .source[open] > summary { color: var(--accent); border-color: var(--accent); }
+  .source[data-open="true"] { display: block; }
   .source > .body {
-    position: absolute;
-    top: calc(100% + 8px);
-    left: 0;
-    z-index: 50;
+    z-index: 60;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -625,20 +620,7 @@
     <h1>Diff Desk</h1>
     <span class="base"><span id="repo"></span></span>
   </div>
-  <details class="source" id="source">
-    <summary title="Choose the repository, the base and the branches to review">Source</summary>
-    <div class="body">
-      <label>Repository<input id="srcdir" type="text" spellcheck="false" placeholder="/path/to/checkout" /></label>
-      <label>Base<input id="srcbase" type="text" spellcheck="false" placeholder="upstream/main" /></label>
-      <input id="srcfilter" type="text" spellcheck="false" placeholder="Filter branches and pull requests" />
-      <div class="refs" id="srcrefs"></div>
-      <div class="refs pulls" id="srcpulls"></div>
-      <div class="row">
-        <button class="solid" id="srcscan">Rescan</button>
-        <span class="status" id="srcstatus"></span>
-      </div>
-    </div>
-  </details>
+  <button class="toggle" id="sourceopen" title="Choose the repository, the base and the branches to review">Source</button>
   <div class="tabs" id="tabs" role="tablist" aria-label="Branch"></div>
   <select id="scope" aria-label="Commit"></select>
   <label class="search">
@@ -659,6 +641,20 @@
   </div>
   <button class="toggle" id="logopen" title="Every comment recorded, and where each one stands">Comments</button>
 </header>
+
+<div class="source" id="source" data-open="false">
+    <div class="body">
+      <label>Repository<input id="srcdir" type="text" spellcheck="false" placeholder="/path/to/checkout" /></label>
+      <label>Base<input id="srcbase" type="text" spellcheck="false" placeholder="upstream/main" /></label>
+      <input id="srcfilter" type="text" spellcheck="false" placeholder="Filter branches and pull requests" />
+      <div class="refs" id="srcrefs"></div>
+      <div class="refs pulls" id="srcpulls"></div>
+      <div class="row">
+        <button class="solid" id="srcscan">Rescan</button>
+        <span class="status" id="srcstatus"></span>
+      </div>
+    </div>
+</div>
 
 <div class="log" id="log" data-open="false">
   <div class="head">
@@ -714,7 +710,7 @@
   const unfolded = new Set();
 
   const els = {};
-  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "brand", "repo", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
+  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "brand", "repo", "source", "sourceopen", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
     els[id] = document.getElementById(id);
   }
 
@@ -779,16 +775,10 @@
     saveSeen();
   }
 
-  function dropStale(files) {
-    let dropped = 0;
-    for (const file of files) {
-      if (seenState(file) === "stale") {
-        delete seen[key(file.path)];
-        dropped += 1;
-      }
-    }
-    if (dropped) saveSeen();
-    return dropped;
+  function countStale(files) {
+    // The tick is kept, not dropped: it is the record that this file was read once, and the reader is the one who
+    // decides it has been read again. Deleting it made the whole review look untouched the moment a diff moved on.
+    return files.filter((file) => seenState(file) === "stale").length;
   }
 
   /* ---------- comments ---------- */
@@ -1807,7 +1797,8 @@
       renderScopes();
       render();
       els.srcstatus.textContent = `${data.branches.length} branch${data.branches.length === 1 ? "" : "es"} loaded`;
-      els.source.open = false;
+      els.source.dataset.open = "false";
+      els.sourceopen.setAttribute("aria-pressed", "false");
     } catch (error) {
       els.srcstatus.textContent = `scan failed: ${error.message}`;
     }
@@ -1839,14 +1830,20 @@
 
   function render() {
     const { files, commit } = view();
-    const staleCount = dropStale(files);
+    const staleCount = countStale(files);
     const shown = visible(files);
     const added = files.reduce((sum, file) => sum + file.added, 0);
     const removed = files.reduce((sum, file) => sum + file.removed, 0);
     const done = files.filter((file) => seenState(file) === "done").length;
     els.tplus.textContent = `+${added.toLocaleString()}`;
     els.tminus.textContent = `−${removed.toLocaleString()}`;
-    els.ptext.textContent = `${done}/${files.length} reviewed`;
+    els.ptext.textContent = staleCount
+      ? `${done}/${files.length} reviewed \u00b7 ${staleCount} reopened`
+      : `${done}/${files.length} reviewed`;
+    els.ptext.dataset.stale = String(Boolean(staleCount));
+    els.ptext.title = staleCount
+      ? `${staleCount} file(s) changed since they were reviewed, so their ticks were dropped`
+      : "Files marked reviewed";
     els.pfill.style.width = files.length ? `${Math.round((done / files.length) * 100)}%` : "0%";
     showStatus(staleCount);
 
@@ -2116,6 +2113,7 @@
     const item = document.createElement("button");
     item.className = "fileitem";
     item.dataset.done = String(seenState(file) === "done");
+    item.dataset.stale = String(seenState(file) === "stale");
     item.dataset.index = String(index);
     item.innerHTML =
       tickMark +
@@ -2232,8 +2230,11 @@
       document.body.classList.toggle("hide-done", on);
     });
   });
-  els.source.addEventListener("toggle", () => {
-    if (els.source.open) loadRefs();
+  els.sourceopen.addEventListener("click", () => {
+    const open = els.source.dataset.open !== "true";
+    els.source.dataset.open = String(open);
+    els.sourceopen.setAttribute("aria-pressed", String(open));
+    if (open) loadRefs();
   });
   els.srcbase.addEventListener("change", loadRefs);
   els.srcdir.addEventListener("change", loadRefs);

@@ -807,8 +807,31 @@ def test_a_branch_with_a_pull_request_says_which_and_opens_it(page, desk):
         desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})
 
 
+def test_the_source_panel_stands_clear_of_the_diff(page):
+    page.locator("#sourceopen").click()
+    page.wait_for_selector("#srcrefs label")
+    standing = page.evaluate("""() => {
+      const panel = document.getElementById('source');
+      const box = panel.getBoundingClientRect();
+      const middle = document.elementFromPoint(Math.round(box.left + box.width / 2), Math.round(box.top + 40));
+      return {
+        visible: panel.offsetParent !== null || getComputedStyle(panel).position === 'fixed',
+        clipped: box.height < 40 || box.width < 40,
+        onTop: Boolean(middle && middle.closest('#source')),
+        belowBar: Math.round(box.top) >= Math.round(document.querySelector('header').getBoundingClientRect().bottom),
+      };
+    }""")
+    # The bar scrolls sideways, so a panel hanging out of it would be clipped by that: it stands outside the bar, over
+    # the diff rather than behind it.
+    assert standing["visible"]
+    assert not standing["clipped"]
+    assert standing["onTop"]
+    assert standing["belowBar"]
+    page.locator("#sourceopen").click()
+
+
 def test_the_source_panel_lists_what_can_be_reviewed(page):
-    page.locator("#source > summary").click()
+    page.locator("#sourceopen").click()
     page.wait_for_selector("#srcrefs label")
     listed = page.locator("#srcrefs label")
     assert listed.count() >= 1
@@ -820,6 +843,38 @@ def test_the_source_panel_lists_what_can_be_reviewed(page):
     page.locator("#srcfilter").fill("nothing matches this")
     assert page.locator("#srcrefs label").count() == 1
     page.locator("#srcfilter").fill("")
+
+
+def test_a_file_changed_since_it_was_reviewed_says_so_where_the_count_is(page, desk):
+    card = sample(page)
+    card.locator("input[type=checkbox]").check()
+    page.wait_for_timeout(150)
+    assert "reopened" not in page.locator("#ptext").inner_text().lower()
+
+    # The same file, its diff moved on: the tick is dropped, and the count says how many were dropped rather than
+    # quietly falling back to zero reviewed.
+    page.evaluate("""() => {
+      const file = view().files.find((entry) => entry.path.endsWith('sample.py'));
+      file.digest = 'moved-on';
+      render();
+    }""")
+    page.wait_for_timeout(150)
+    # Read case-insensitively: the label is set in capitals by the style, not by what is written into it.
+    reads = page.locator("#ptext").inner_text().lower()
+    assert "1 reopened" in reads
+    assert page.locator("#ptext").get_attribute("data-stale") == "true"
+    assert "changed since they were reviewed" in page.locator("#ptext").get_attribute("title")
+    # The tick is kept, so the file still shows it was read once and says the diff has moved since - and it survives the
+    # next render rather than being cleared by the very act of noticing it.
+    page.evaluate("() => render()")
+    page.wait_for_timeout(120)
+    assert "1 reopened" in page.locator("#ptext").inner_text().lower()
+    assert card.get_attribute("data-done") == "false"
+    assert "changed since review" in card.inner_text().lower()
+    listed = page.locator("#filelist .fileitem[data-stale='true']")
+    assert listed.count() == 1
+    card.locator("input[type=checkbox]").uncheck()
+    page.evaluate("() => localStorage.clear()")
 
 
 @pytest.mark.parametrize("width", [1900, 1400, 1100, 900])
