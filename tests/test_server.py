@@ -214,6 +214,58 @@ def test_closing_a_posted_comment_resolves_its_thread_on_the_pull_request(desk):
     assert outcome["ok"] is False
     assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "failed"
 
+    # A pull request that holds no thread of ours settles nothing: claiming resolved here would be claiming GitHub's
+    # agreement without it, which is worse than saying it is still owed.
+    empty = {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}}
+    desk.github_answers(rules=[{"match": "reviewThreads", "out": json.dumps(empty)}])
+    desk.post("/close", {"repo": "someone/somewhere", "pr": 3})
+    unfound = {row["seq"]: row for row in desk.get("/comments")}[seq]
+    assert unfound["prResolve"] == "failed"
+    assert "could not be found" in unfound["prResolveError"]
+
+    # A mutation that answers without saying the thread is resolved is not a resolution either.
+    quiet = {"data": {"resolveReviewThread": {"thread": {"isResolved": False}}}}
+    desk.github_answers(
+        rules=[
+            {
+                "match": "reviewThreads",
+                "out": json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "nodes": [
+                                            {
+                                                "id": "T_ours",
+                                                "isResolved": False,
+                                                "comments": {
+                                                    "nodes": [
+                                                        {
+                                                            "databaseId": 9,
+                                                            "body": "close me",
+                                                            "path": "sample.py",
+                                                            "author": {"login": "duburcqa"},
+                                                        }
+                                                    ]
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ),
+            },
+            {"match": "resolveReviewThread", "out": json.dumps(quiet)},
+        ]
+    )
+    desk.post("/close", {"repo": "someone/somewhere", "pr": 3})
+    unsure = {row["seq"]: row for row in desk.get("/comments")}[seq]
+    assert unsure["prResolve"] == "failed"
+    assert "did not report" in unsure["prResolveError"]
+
     # The thread that holds our comment is the one resolved, found by the body this desk posted.
     threads = {
         "data": {
@@ -240,11 +292,13 @@ def test_closing_a_posted_comment_resolves_its_thread_on_the_pull_request(desk):
     desk.github_answers(
         rules=[
             {"match": "reviewThreads", "out": json.dumps(threads)},
-            {"match": "resolveReviewThread", "out": json.dumps({"data": {"resolveReviewThread": {}}})},
+            {
+                "match": "resolveReviewThread",
+                "out": json.dumps({"data": {"resolveReviewThread": {"thread": {"isResolved": True}}}}),
+            },
         ]
     )
     landed = desk.post("/close", {"repo": "someone/somewhere", "pr": 3})
-    assert landed["ok"] is True
     assert landed["closed"] >= 1
     assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "done"
 
@@ -303,7 +357,10 @@ def test_a_comment_closed_before_the_pull_request_knew_of_it_is_still_owed_a_res
     desk.github_answers(
         rules=[
             {"match": "reviewThreads", "out": json.dumps(threads)},
-            {"match": "resolveReviewThread", "out": json.dumps({"data": {"resolveReviewThread": {}}})},
+            {
+                "match": "resolveReviewThread",
+                "out": json.dumps({"data": {"resolveReviewThread": {"thread": {"isResolved": True}}}}),
+            },
         ]
     )
     # A sweep must notice it from its state alone, rather than only from the moment it was closed.
@@ -356,7 +413,10 @@ def test_syncing_resolves_there_what_was_closed_here(desk):
     desk.github_answers(
         rules=[
             {"match": "reviewThreads", "out": json.dumps(threads)},
-            {"match": "resolveReviewThread", "out": json.dumps({"data": {"resolveReviewThread": {}}})},
+            {
+                "match": "resolveReviewThread",
+                "out": json.dumps({"data": {"resolveReviewThread": {"thread": {"isResolved": True}}}}),
+            },
         ]
     )
     outcome = desk.post("/sync", {"repo": "someone/somewhere", "pr": 6})

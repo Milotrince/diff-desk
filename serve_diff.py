@@ -119,9 +119,13 @@ def review_threads(repo, number):
 
 
 def resolve_thread(thread):
-    """Resolve one review thread. A thread that is not there is nothing owed: it was resolved already, or never ours."""
+    """Resolve one review thread, and believe it only when GitHub says it is resolved.
+
+    Judged on the answer rather than on the exit status: a query can come back carrying errors and still be a successful
+    request, and this desk must never report a resolution the pull request does not have.
+    """
     if thread is None:
-        return "done", ""
+        return "failed", "its thread could not be found on the pull request"
     done = subprocess.run(
         [*gen_diff_data.github(), "api", "graphql", "-f", f"query={RESOLVE}", "-F", f"thread={thread}"],
         capture_output=True,
@@ -129,9 +133,17 @@ def resolve_thread(thread):
         timeout=90,
         check=False,
     )
-    if done.returncode == 0:
+    if done.returncode != 0:
+        return "failed", " ".join((done.stderr or done.stdout).split())[:300]
+    try:
+        answer = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        return "failed", f"GitHub answered with something other than an answer: {done.stdout[:120]}"
+    if answer.get("errors"):
+        return "failed", " ".join(str(answer["errors"])[:300].split())
+    if answer.get("data", {}).get("resolveReviewThread", {}).get("thread", {}).get("isResolved") is True:
         return "done", ""
-    return "failed", " ".join((done.stderr or done.stdout).split())[:300]
+    return "failed", "GitHub did not report the thread as resolved"
 
 
 def owes_resolution(row):
@@ -532,12 +544,22 @@ class Handler(BaseHTTPRequestHandler):
             print(f"CLOSE FAILED {trouble}", flush=True)
             self._json({"ok": False, "error": trouble, "closed": 0, "owed": len(owed)})
             return
-        opened = {}
+        # Split by what the pull request says: a thread it already holds as resolved is settled, one it holds as open is
+        # resolved now, and a comment matching neither is left owed. Assuming the last case settled would report a
+        # resolution the pull request does not have, which is the one thing this must never do.
+        opened, settled = {}, set()
         for thread in threads:
             said = thread["comments"]["nodes"]
-            if said and not thread["isResolved"]:
+            if not said:
+                continue
+            if thread["isResolved"]:
+                settled.add(said[0]["body"])
+            else:
                 opened[said[0]["body"]] = thread["id"]
-        outcome = {row["seq"]: resolve_thread(opened.get(row["text"])) for row in owed}
+        outcome = {
+            row["seq"]: ("done", "") if row["text"] in settled else resolve_thread(opened.get(row["text"]))
+            for row in owed
+        }
         closed = len([seq for seq, (state, _) in outcome.items() if state == "done"])
         with changing() as fresh:
             for row in fresh:
