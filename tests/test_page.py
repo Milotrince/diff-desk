@@ -242,6 +242,30 @@ def test_the_file_list_follows_the_folders(page):
     page.evaluate("() => localStorage.removeItem('diffdesk.folded')")
 
 
+def test_a_comment_keeps_its_code_and_its_line_breaks(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    pasted = "Try this instead:\n\n```python\nif x:\n    return math.pi * r**2\n```\n\nand call `area()` after."
+    desk.post("/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": pasted}])
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    thread = page.locator(".thread").filter(has=page.locator("pre code")).first
+    block = thread.locator("pre code").first
+    # The fence becomes a code block keeping its indentation, and its language line is a label rather than code.
+    assert block.inner_text() == "if x:\n    return math.pi * r**2"
+    assert "python" not in block.inner_text()
+    assert thread.locator("code", has_text="area()").count() == 1
+    # Text a reviewer pastes is text: it never becomes part of the page.
+    hostile = "<script>window.broken = 1</script> and <b>bold</b>"
+    desk.post(
+        "/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": hostile}]
+    )
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    assert page.evaluate("() => window.broken") is None
+    assert page.locator(".thread b").count() == 0
+    assert page.locator(".thread .said", has_text="<b>bold</b>").count() >= 1
+
+
 def test_the_log_says_where_every_comment_stands(page, desk):
     branch = page.evaluate("() => data.branches[0].ref")
     desk.post(

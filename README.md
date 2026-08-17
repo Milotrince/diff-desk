@@ -39,6 +39,8 @@ On the page:
   threaded and posted exactly like a batch.
 - **Every comment is a thread.** Either side can reply, and either side can resolve or reopen it. Resolving folds the
   thread to its remark alone and keeps every reply behind one click; nothing is ever deleted.
+- **Code stays code.** A fenced block keeps its indentation as a code block, backticks stay inline code, and line
+  breaks stay where you put them. Pasted text is only ever text, never markup the page acts on.
 - **Edit** rewrites a comment and keeps what it said before. One already posted to a pull request is marked as having
   moved on from what the pull request holds.
 - **Comments** in the header opens the log: every comment on the branch, whether it is open or resolved, whether it is
