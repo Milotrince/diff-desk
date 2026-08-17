@@ -333,8 +333,16 @@
   /* The table is as wide as its widest line, so a comment left to that width puts everything after its text - the
      chip that unfolds it, the buttons - beyond the right edge, unreachable and never clipped. Pinned to the left of
      the scrolling body and sized to what is actually visible, measured on the body itself. */
-  .noterow td { padding: 0; background: var(--surface-sunk); position: sticky; left: 0; z-index: 1; }
-  .noterow td > * { width: var(--seen, 100%); box-sizing: border-box; }
+  .noterow td { padding: 0; background: var(--surface-sunk); }
+  /* Held at the left of what is on screen and sized to it. Sticky would say this, but a sticky box inside a table cell
+     is not honoured everywhere, so the offset is taken from the body's own scrolling instead. */
+  .noterow td > * {
+    position: relative;
+    z-index: 1;
+    width: var(--seen, 100%);
+    box-sizing: border-box;
+    transform: translateX(var(--slid, 0px));
+  }
   .notebox { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-left: 3px solid var(--accent); }
   .notebox textarea, .tray textarea {
     font: inherit;
@@ -373,7 +381,7 @@
     font-size: 12.5px;
     white-space: normal;
   }
-  .thread .line { display: flex; align-items: baseline; gap: 8px; }
+  .thread .line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   .thread .who { flex: none; font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .thread .said { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
   .thread .said pre {
@@ -397,7 +405,6 @@
   .thread.done { background: var(--add-bg); border-left-color: var(--add-gutter); }
   .thread.folded { padding: 4px 10px; }
   .thread.folded .said { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-  .thread.folded { flex-direction: row; align-items: baseline; }
   .thread.done > .line:first-child .said { color: var(--muted); }
   .thread .reply { padding-left: 10px; border-left: 1px solid var(--rule-strong); }
   .thread .reply.session .who { color: var(--accent); }
@@ -1604,10 +1611,15 @@
     paintSel();
   }
 
-  // What each file's body can actually show, so comments hanging inside it are sized to the reader's view.
+  // What each file's body can actually show, and how far it has been scrolled: together they keep every comment on
+  // screen whatever the width of the diff it hangs under.
   const roomFor = new ResizeObserver((entries) => {
     for (const entry of entries) entry.target.style.setProperty("--seen", `${Math.round(entry.contentRect.width)}px`);
   });
+
+  function follow(body) {
+    body.style.setProperty("--slid", `${Math.round(body.scrollLeft)}px`);
+  }
 
   function card(file, index) {
     const status = seenState(file);
@@ -1663,6 +1675,7 @@
     const body = document.createElement("div");
     body.className = "body";
     roomFor.observe(body);
+    body.addEventListener("scroll", () => follow(body), { passive: true });
     if (file.binary) {
       const note = document.createElement("div");
       note.className = "empty";

@@ -310,6 +310,40 @@ def test_a_folded_thread_says_what_it_is_about_even_when_it_is_only_code(page, d
     assert fits
 
 
+def test_a_comment_stays_inside_the_view_when_the_diff_is_scrolled(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    long = "A remark long enough to need clipping: " + "the quick brown fox jumps over the lazy dog. " * 12
+    desk.post("/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": long}])
+    # Narrow enough that the diff's own lines overflow, which is when a comment used to be dragged off with them.
+    page.set_viewport_size({"width": 820, "height": 900})
+    page.reload(wait_until="load")
+    page.wait_for_selector(".thread")
+    for shift in (0, 400):
+        held = page.evaluate(
+            """(shift) => {
+              const thread = document.querySelector('.thread');
+              const body = thread.closest('.body');
+              body.scrollTo({left: shift});
+              return new Promise((done) => setTimeout(() => {
+                const seen = body.getBoundingClientRect();
+                const box = thread.getBoundingClientRect();
+                const line = thread.querySelector('.line');
+                done({
+                  leftGap: Math.round(box.left - seen.left),
+                  rightGap: Math.round(seen.right - box.right),
+                  lastInside: Math.round(line.lastElementChild.getBoundingClientRect().right) <= Math.round(seen.right),
+                });
+              }, 250));
+            }""",
+            shift,
+        )
+        # Flush with what is on screen at any scroll position, so nothing it carries is ever out of reach.
+        assert held["leftGap"] == 0
+        assert held["rightGap"] == 0
+        assert held["lastInside"]
+    page.set_viewport_size({"width": 1500, "height": 900})
+
+
 def test_the_log_says_where_every_comment_stands(page, desk):
     branch = page.evaluate("() => data.branches[0].ref")
     desk.post(
