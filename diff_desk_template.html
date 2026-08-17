@@ -225,6 +225,9 @@
   .fileitem:hover { background: var(--surface-sunk); }
   .fileitem[data-current="true"] { background: var(--accent-soft); }
   .fileitem[data-done="true"] .name { color: var(--faint); text-decoration: line-through; }
+  /* Read once, and changed since: the tick stands but in the colour of anything gone stale. */
+  .fileitem[data-stale="true"] .tick { opacity: 1; color: var(--stale); }
+  .fileitem[data-stale="true"] .name { color: var(--stale); }
   /* The indentation of the tree is padding on the row, so the row keeps the panel's width and the counts of every file
      line up down one edge whatever depth they sit at. */
   .fileitem { box-sizing: border-box; }
@@ -772,16 +775,10 @@
     saveSeen();
   }
 
-  function dropStale(files) {
-    let dropped = 0;
-    for (const file of files) {
-      if (seenState(file) === "stale") {
-        delete seen[key(file.path)];
-        dropped += 1;
-      }
-    }
-    if (dropped) saveSeen();
-    return dropped;
+  function countStale(files) {
+    // The tick is kept, not dropped: it is the record that this file was read once, and the reader is the one who
+    // decides it has been read again. Deleting it made the whole review look untouched the moment a diff moved on.
+    return files.filter((file) => seenState(file) === "stale").length;
   }
 
   /* ---------- comments ---------- */
@@ -1833,7 +1830,7 @@
 
   function render() {
     const { files, commit } = view();
-    const staleCount = dropStale(files);
+    const staleCount = countStale(files);
     const shown = visible(files);
     const added = files.reduce((sum, file) => sum + file.added, 0);
     const removed = files.reduce((sum, file) => sum + file.removed, 0);
@@ -2116,6 +2113,7 @@
     const item = document.createElement("button");
     item.className = "fileitem";
     item.dataset.done = String(seenState(file) === "done");
+    item.dataset.stale = String(seenState(file) === "stale");
     item.dataset.index = String(index);
     item.innerHTML =
       tickMark +

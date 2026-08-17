@@ -864,6 +864,15 @@ def test_a_file_changed_since_it_was_reviewed_says_so_where_the_count_is(page, d
     assert "1 reopened" in reads
     assert page.locator("#ptext").get_attribute("data-stale") == "true"
     assert "changed since they were reviewed" in page.locator("#ptext").get_attribute("title")
+    # The tick is kept, so the file still shows it was read once and says the diff has moved since - and it survives the
+    # next render rather than being cleared by the very act of noticing it.
+    page.evaluate("() => render()")
+    page.wait_for_timeout(120)
+    assert "1 reopened" in page.locator("#ptext").inner_text().lower()
+    assert card.get_attribute("data-done") == "false"
+    assert "changed since review" in card.inner_text().lower()
+    listed = page.locator("#filelist .fileitem[data-stale='true']")
+    assert listed.count() == 1
     card.locator("input[type=checkbox]").uncheck()
     page.evaluate("() => localStorage.clear()")
 
