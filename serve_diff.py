@@ -40,6 +40,7 @@ import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import NamedTuple
 from urllib.parse import parse_qs, urlparse
 
 import gen_diff_data
@@ -144,6 +145,44 @@ def resolve_thread(thread):
     if answer.get("data", {}).get("resolveReviewThread", {}).get("thread", {}).get("isResolved") is True:
         return "done", ""
     return "failed", "GitHub did not report the thread as resolved"
+
+
+class Reconciled(NamedTuple):
+    """What one comment and its thread owe each other: replies each way, and where resolution stands."""
+
+    landed: list
+    sent: int
+    incoming: list
+    settled: bool
+    given: tuple | None
+
+
+def reconcile(repo, number, row, thread):
+    """Carry replies both ways for one comment, and settle its resolution against the thread."""
+    if thread is None:
+        # Nothing on the pull request answers to this comment, so whatever was believed about it stands
+        # uncorroborated: it is owed again rather than left claiming a resolution nobody can see.
+        owed = (
+            ("failed", "its thread could not be found on the pull request") if row.get("state") == "resolved" else None
+        )
+        return Reconciled([], 0, [], False, owed)
+    said = thread["comments"]["nodes"]
+    landed, going = carry_replies(repo, number, row, said)
+    settled, given = agree(thread, row)
+    return Reconciled(landed, going, incoming(row, said), settled, given)
+
+
+def agree(thread, row):
+    """What a sync should make of one thread: whether to close the comment here, and what resolving it there gave.
+
+    Decided on what the pull request says rather than on what this desk recorded, which is what repairs a comment
+    wrongly believed resolved there - trusting the record is how such a belief survives a sync.
+    """
+    if thread["isResolved"]:
+        return True, None
+    if row.get("state") == "resolved":
+        return False, resolve_thread(thread["id"])
+    return False, None
 
 
 def owes_resolution(row):
@@ -594,32 +633,21 @@ class Handler(BaseHTTPRequestHandler):
             said = thread["comments"]["nodes"]
             if said:
                 theirs[said[0]["body"]] = thread
-        sent, brought, closed, away = 0, 0, 0, 0
-        pushed, pulled, resolved, there = {}, {}, set(), {}
-        for seq, row in posted.items():
-            thread = theirs.get(row["text"])
-            if thread is None:
-                continue
-            said = thread["comments"]["nodes"]
-            landed, going = carry_replies(order["repo"], order["pr"], row, said)
-            pushed[seq] = landed
-            sent += going
-            brought_here = incoming(row, said)
-            if brought_here:
-                pulled[seq] = brought_here
-                brought += len(brought_here)
-            if thread["isResolved"]:
-                closed += row.get("state") != "resolved"
-                resolved.add(seq)
-            elif owes_resolution(row):
-                # Closed here and open there: the resolution owed is given now rather than waiting for another sweep.
-                there[seq] = resolve_thread(thread["id"])
-                away += there[seq][0] == "done"
+        found = {
+            seq: reconcile(order["repo"], order["pr"], row, theirs.get(row["text"])) for seq, row in posted.items()
+        }
+        sent = sum(step.sent for step in found.values())
+        brought = sum(len(step.incoming) for step in found.values())
+        closed = len([seq for seq, step in found.items() if step.settled and posted[seq].get("state") != "resolved"])
+        away = len([step for step in found.values() if step.given and step.given[0] == "done"])
         with changing() as fresh:
             for row in fresh:
-                settle(row, pushed.get(row["seq"], []), pulled.get(row["seq"], []), row["seq"] in resolved)
-                if row["seq"] in there:
-                    row["prResolve"], trouble = there[row["seq"]]
+                step = found.get(row["seq"])
+                if step is None:
+                    continue
+                settle(row, step.landed, step.incoming, step.settled)
+                if step.given:
+                    row["prResolve"], trouble = step.given
                     if trouble:
                         row["prResolveError"] = trouble
                     else:

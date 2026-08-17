@@ -121,7 +121,10 @@ def sync(args):
     outcome = ask("/sync", {"repo": data["upstream"], "pr": branch["pr"]["number"]})
     if not outcome.get("ok"):
         sys.exit(outcome.get("error", "the sync was refused"))
-    print(f"sent {outcome['sent']} reply(ies), brought {outcome['brought']} back, closed {outcome['closed']} here")
+    print(
+        f"sent {outcome['sent']} reply(ies), brought {outcome['brought']} back, "
+        f"closed {outcome['closed']} here, resolved {outcome['resolved']} there"
+    )
 
 
 def bind(args):

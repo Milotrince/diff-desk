@@ -369,6 +369,81 @@ def test_a_comment_closed_before_the_pull_request_knew_of_it_is_still_owed_a_res
     assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "done"
 
 
+def test_syncing_repairs_a_comment_wrongly_believed_resolved_on_the_pull_request(desk):
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [
+                {"branch": "feature", "path": "sample.py", "line": 23, "side": "new", "text": "believed resolved"}
+            ],
+            "github": True,
+        },
+    )
+    seq = made["seqs"][0]
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/8#review-1"}))
+    desk.post("/publish", {"repo": "someone/somewhere", "pr": 8, "seq": [seq]})
+
+    # As an older desk left it: closed here and recorded as resolved there, though the pull request never was asked.
+    held = desk.home / "comments.jsonl"
+    rows = [json.loads(line) for line in held.read_text().splitlines() if line.strip()]
+    for row in rows:
+        if row["seq"] == seq:
+            row["state"] = "resolved"
+            row["prResolve"] = "done"
+    held.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    thread = {
+        "id": "T_believed",
+        "isResolved": False,
+        "comments": {
+            "nodes": [
+                {"databaseId": 801, "body": "believed resolved", "path": "sample.py", "author": {"login": "duburcqa"}}
+            ]
+        },
+    }
+    desk.github_answers(
+        rules=[
+            {
+                "match": "reviewThreads",
+                "out": json.dumps({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [thread]}}}}}),
+            },
+            {
+                "match": "resolveReviewThread",
+                "out": json.dumps({"data": {"resolveReviewThread": {"thread": {"isResolved": True}}}}),
+            },
+        ]
+    )
+    # What the pull request says decides, so a resolution only this desk believed in is made real rather than trusted.
+    outcome = desk.post("/sync", {"repo": "someone/somewhere", "pr": 8})
+    assert outcome["resolved"] >= 1
+    assert any("resolveReviewThread" in call and "T_believed" in call for call in desk.github_calls())
+    assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "done"
+
+
+def test_syncing_reopens_the_question_when_the_thread_is_nowhere_to_be_found(desk):
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [
+                {"branch": "feature", "path": "sample.py", "line": 24, "side": "new", "text": "vanished thread"}
+            ],
+            "github": True,
+        },
+    )
+    seq = made["seqs"][0]
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/9#review-1"}))
+    desk.post("/publish", {"repo": "someone/somewhere", "pr": 9, "seq": [seq]})
+    desk.post("/resolve", {"seq": [seq], "who": "you"})
+
+    empty = {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}}
+    desk.github_answers(rules=[{"match": "reviewThreads", "out": json.dumps(empty)}])
+    desk.post("/sync", {"repo": "someone/somewhere", "pr": 9})
+    row = {row["seq"]: row for row in desk.get("/comments")}[seq]
+    # Believed of nothing: with no thread answering to it, the comment is owed a resolution rather than granted one.
+    assert row["prResolve"] == "failed"
+    assert "could not be found" in row["prResolveError"]
+
+
 def test_syncing_resolves_there_what_was_closed_here(desk):
     made = desk.post(
         "/comments",

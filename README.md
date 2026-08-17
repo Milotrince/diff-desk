@@ -50,6 +50,10 @@ On the page:
   was written there is brought back and shown with its author. Resolution travels both ways too - a thread resolved on
   the pull request is closed here, since that is the copy everyone else reads, and one closed here is resolved there.
   Syncing twice sends nothing twice.
+
+  What the pull request says decides, every time: a comment this desk believed resolved there is resolved for real if
+  its thread is still open, and one whose thread cannot be found is owed a resolution again rather than left claiming
+  one. A resolution is believed only when GitHub reports the thread as resolved.
 - **Code stays code.** A fenced block keeps its indentation as a code block, backticks stay inline code, and line
   breaks stay where you put them. Pasted text is only ever text, never markup the page acts on.
 - **Edit** rewrites a comment and keeps what it said before. One already posted to a pull request is marked as having
