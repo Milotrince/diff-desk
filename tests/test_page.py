@@ -509,19 +509,24 @@ def test_marking_a_file_reviewed_from_inside_it_brings_reading_back_to_the_next_
         """(path) => {
           const node = document.querySelector(`section.file[data-path="${CSS.escape(path)}"]`);
           const after = node.nextElementSibling;
+          const page = document.scrollingElement;
           return {
             header: Math.round(document.querySelector('header').getBoundingClientRect().bottom),
             head: Math.round(node.getBoundingClientRect().top),
             next: after ? Math.round(after.getBoundingClientRect().top) : null,
             folded: node.dataset.open,
             scroll: Math.round(window.scrollY),
+            atEnd: Math.round(page.scrollTop + page.clientHeight) >= Math.round(page.scrollHeight) - 2,
           };
         }""",
         path,
     )
     assert placed["folded"] == "false"
-    # Reading resumes at the file just folded away, with the next one under it: nothing between is scrolled past.
-    assert placed["header"] <= placed["head"] <= placed["header"] + 40
+    # Reading resumes at the file just folded away, with the next one under it: nothing between is scrolled past. Where
+    # the document has run out of room below - the last file of a diff - it comes only as near the top as that allows.
+    assert placed["head"] >= placed["header"] - 1
+    if not placed["atEnd"]:
+        assert placed["head"] <= placed["header"] + 40
     if placed["next"] is not None:
         assert placed["next"] > placed["head"]
     assert placed["scroll"] < started
