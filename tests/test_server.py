@@ -649,6 +649,27 @@ def test_a_comment_github_rejects_is_kept_and_not_retried(desk):
     assert {row["seq"]: row for row in desk.get("/comments")}[made["seqs"][0]]["github"] == "refused"
 
 
+def test_a_file_comment_is_posted_against_the_file_and_no_line(desk):
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [
+                {"branch": "feature", "path": "sample.py", "line": 0, "side": "file", "text": "about the file"}
+            ],
+            "github": True,
+        },
+    )
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/13#review-1"}))
+    assert desk.post("/publish", {"repo": "someone/somewhere", "pr": 13, "seq": made["seqs"]})["ok"]
+    # What went out, read from what the stand-in was given: the file named, and no line beside it.
+    sent = json.loads([call for call in desk.github_calls() if "/reviews" in call][-1].split(" <<< ", 1)[1])
+    assert sent["comments"][-1] == {"path": "sample.py", "body": "about the file", "subject_type": "file"}
+    posted = {row["seq"]: row for row in desk.get("/comments")}[made["seqs"][0]]
+    assert posted["github"] == "posted"
+    assert posted["side"] == "file"
+    assert posted["line"] == 0
+
+
 def test_a_comment_not_bound_for_github_is_never_offered_to_it(desk):
     made = desk.post(
         "/comments", [{"branch": "feature", "path": "sample.py", "line": 14, "side": "new", "text": "local"}]

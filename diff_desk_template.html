@@ -343,6 +343,11 @@
   /* The table is as wide as its widest line, so a comment left to that width puts everything after its text - the
      chip that unfolds it, the buttons - beyond the right edge, unreachable and never clipped. Pinned to the left of
      the scrolling body and sized to what is actually visible, measured on the body itself. */
+  .filenote { padding: 0 0 0 0; background: var(--surface-sunk); border-bottom: 1px solid var(--rule); }
+  .filenote.writing { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-left: 3px solid var(--accent); }
+  .filenote.writing textarea { font: inherit; font-family: var(--sans); font-size: 12.5px; min-height: 52px; padding: 7px 8px; color: var(--ink); background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 6px; resize: vertical; }
+  .filenote.writing .row { display: flex; align-items: center; gap: 8px; }
+
   .noterow td { padding: 0; background: var(--surface-sunk); }
   /* Held at the left of what is on screen and sized to it. Sticky would say this, but a sticky box inside a table cell
      is not honoured everywhere, so the offset is taken from the body's own scrolling instead. */
@@ -791,7 +796,12 @@
     els.status.innerHTML = bits.join(" \u00b7 ");
   }
 
-  const span = (note) => (note.endLine && note.endLine !== note.line ? `L${note.line}\u2013${note.endLine}` : `L${note.line}`);
+  const span = (note) =>
+    note.side === "file"
+      ? "the file"
+      : note.endLine && note.endLine !== note.line
+        ? `L${note.line}\u2013${note.endLine}`
+        : `L${note.line}`;
 
   const OWED = ["pending", "failed"];
 
@@ -826,7 +836,9 @@
     return keys;
   }
 
-  const isOutdated = (note, keys) => !keys.has(`${note.path}|${note.side}|${note.endLine || note.line}`);
+  // A remark about a whole file has no line to lose, so it is never left behind by one.
+  const isOutdated = (note, keys) =>
+    note.side !== "file" && !keys.has(`${note.path}|${note.side}|${note.endLine || note.line}`);
 
   function mine() {
     return notes.sent.filter((note) => note.branch === branch().ref && note.path !== "(review)");
@@ -1415,6 +1427,54 @@
     if (spot) openComposer(spot.row, sel.path, spot.line, spot.endLine, spot.side);
   }
 
+  function openFileComposer(card, file) {
+    if (card.querySelector(".filenote.writing")) return;
+    const box = document.createElement("div");
+    box.className = "filenote writing";
+    const field = document.createElement("textarea");
+    field.placeholder = `Comment on ${file.path}, as a whole`;
+    const controls = document.createElement("div");
+    controls.className = "row";
+    const now = document.createElement("button");
+    now.className = "solid direct";
+    now.textContent = "Send";
+    const keep = document.createElement("button");
+    keep.className = "solid";
+    keep.textContent = "Add to review";
+    const drop = document.createElement("button");
+    drop.className = "ghost";
+    drop.textContent = "Cancel";
+    controls.append(now, keep, drop);
+    box.append(field, controls);
+    card.querySelector(".filehead").after(box);
+    field.focus();
+
+    // A file comment carries no line, which is what tells it apart everywhere else: in the log, on the page, and in
+    // what is posted to the pull request.
+    const written = () => ({ branch: branch().ref, path: file.path, line: 0, side: "file", text: field.value.trim(), at: stamp() });
+    drop.addEventListener("click", () => box.remove());
+    keep.addEventListener("click", () => {
+      if (!field.value.trim()) return;
+      notes.drafts.push(written());
+      box.remove();
+      drawTray();
+      render();
+    });
+    now.addEventListener("click", async () => {
+      if (!field.value.trim()) return;
+      const alone = written();
+      box.remove();
+      await send1(alone);
+    });
+    field.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        keep.click();
+      }
+      if (event.key === "Escape") box.remove();
+    });
+  }
+
   function openComposer(afterRow, path, line, endLine, side) {
     if (afterRow.nextElementSibling && afterRow.nextElementSibling.dataset.composer === "true") return;
     const row = document.createElement("tr");
@@ -1835,8 +1895,22 @@
     });
     seenLabel.append(box, document.createTextNode("Reviewed"));
 
-    head.append(grow, counts, seenLabel);
+    const whole = document.createElement("button");
+    whole.className = "tiny";
+    whole.textContent = "Comment on the file";
+    whole.title = "A remark about this file as a whole, tied to no line of it";
+    whole.addEventListener("click", () => openFileComposer(wrap, file));
+
+    head.append(grow, counts, whole, seenLabel);
     wrap.append(head);
+
+    for (const note of notesAt(file.path, 0, "file")) {
+      note.source = notes.drafts.find((draft) => draft.text === note.text && draft.path === note.path);
+      const holder = document.createElement("div");
+      holder.className = "filenote";
+      holder.append(noteRow(note).querySelector(".thread"));
+      wrap.append(holder);
+    }
 
     const body = document.createElement("div");
     body.className = "body";

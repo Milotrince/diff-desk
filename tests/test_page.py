@@ -351,7 +351,8 @@ def test_a_comment_stays_inside_the_view_when_the_diff_is_scrolled(page, desk):
     for shift in (0, 400):
         held = page.evaluate(
             """(shift) => {
-              const thread = document.querySelector('.thread');
+              // A comment on a line, which is the one that hangs inside the scrolling diff.
+              const thread = document.querySelector('.body .thread');
               const body = thread.closest('.body');
               body.scrollTo({left: shift});
               return new Promise((done) => setTimeout(() => {
@@ -540,6 +541,35 @@ def test_marking_a_file_reviewed_from_above_it_leaves_the_view_alone(page):
     assert page.evaluate("() => Math.round(window.scrollY)") == before
     card.locator("input[type=checkbox]").uncheck()
     page.evaluate("() => localStorage.clear()")
+
+
+def test_a_file_can_be_commented_on_as_a_whole(page, desk):
+    card = sample(page)
+    path = card.locator(".path").first.inner_text()
+    before = len(desk.get("/comments"))
+    card.locator("button.tiny").filter(has_text="Comment on the file").click()
+    page.locator(".filenote.writing textarea").fill("this file wants splitting in two")
+    page.locator(".filenote.writing button.solid.direct").click()
+    page.wait_for_function("() => document.querySelectorAll('.filenote.writing').length === 0")
+    until(lambda: len(desk.get("/comments")) == before + 1)
+    note = desk.get("/comments")[-1]
+    # Tied to the file and to no line of it, which is what makes it a remark about the file.
+    assert note["path"] == path
+    assert note["side"] == "file"
+    assert note["line"] == 0
+    assert note["text"] == "this file wants splitting in two"
+
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    again = sample(page)
+    # Shown under the file's own header, where it was written, rather than against a line it does not have.
+    thread = again.locator(".filenote .thread").first
+    assert "this file wants splitting in two" in thread.inner_text()
+    assert "the file" in thread.locator(".who").first.inner_text()
+    page.locator("#logopen").click()
+    page.wait_for_selector("#log[data-open='true']")
+    assert "the file" in page.locator("#logrows .logrow").filter(has_text="wants splitting").first.inner_text()
+    page.locator("#logclose").click()
 
 
 def test_the_log_says_where_every_comment_stands(page, desk):

@@ -42,6 +42,9 @@ On the page:
 - **Nothing has to go out all at once.** Each comment waiting in the review tray has its own Send, leaving the rest
   pending, and the Comments panel groups everything by the batch it was written in, with a Send for each - so batches go
   to the pull request one at a time, in whatever order suits.
+- **A file can be commented on as a whole**, from its header, for a remark that belongs to no line of it. It is
+  recorded, threaded, replied to and resolved like any other, reads as "the file" wherever a line range would be, and
+  reaches a pull request as a review comment naming the file with no line beside it.
 - **Every comment is a thread.** Either side can reply, and either side can resolve or reopen it. Resolving folds the
   thread to its remark alone and keeps every reply behind one click; nothing is ever deleted.
 - **Resolving one that reached the pull request resolves it there too**, by finding the thread its text opened and

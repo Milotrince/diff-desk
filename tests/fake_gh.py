@@ -13,8 +13,11 @@ import sys
 asked = json.loads(pathlib.Path(os.environ["FAKE_GH_SCRIPT"]).read_text())
 asking = " ".join(sys.argv[1:])
 if os.environ.get("FAKE_GH_LOG"):
+    # Whatever is piped in is recorded only when it was asked for, since a call given nothing inherits a standard input
+    # that never ends and reading it would wait for good.
+    given = sys.stdin.read() if "--input" in sys.argv else ""
     with pathlib.Path(os.environ["FAKE_GH_LOG"]).open("a") as told:
-        told.write(asking + "\n")
+        told.write(asking + (f" <<< {given}" if given else "") + "\n")
 wanted = next((rule for rule in asked.get("rules", []) if rule["match"] in asking), asked)
 # Whatever is being piped in is left unread: only a posted review is given anything, and the calls that resolve a
 # repository inherit a standard input that never ends, which reading would wait on for good.
