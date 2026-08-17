@@ -16,9 +16,14 @@ Run in the background, then give the user the URL:
 
     python3 ~/.claude/skills/diff-desk/desk.py serve --dir <repo> --base <ref> [refs ...]
 
-Omit `refs` to offer every local branch ahead of the base. `--base` defaults to `upstream/main`. The checked-out
-branch is shown with its uncommitted work included. Re-running while a desk is already up just rebuilds the page.
-The user can also switch repository, base and branches from the page's own Source panel.
+`refs` are local branches, pull request numbers (`3243`, `#3243`, `pr/3243`), or a mix of both; omit them to offer
+every local branch ahead of the base. `--base` defaults to `upstream/main`. The checked-out branch is shown with its
+uncommitted work included. A pull request is fetched from the upstream repository by number into
+`refs/diffdesk/pull/<number>`, so the fork and branch it lives on never have to be named. Re-running while a desk is
+already up just rebuilds the page. The user can also switch repository, base, branches and pull requests from the
+page's own Source panel.
+
+`desk.py refs --dir <repo> --base <ref>` lists what is available: branches ahead of the base, and open pull requests.
 
 ## Picking up the comments
 
@@ -27,13 +32,21 @@ one, run in the background - it blocks until a batch lands, prints it, and exits
 
     python3 ~/.claude/skills/diff-desk/desk.py watch
 
-Each comment prints as `[seq] branch path:line-endLine (side) text`. Address them, then mark them done so the page
-shows them closed:
+Each comment prints as `[seq] branch path:line-endLine (side) text`, followed by its state and any replies. Answer in
+the thread, and close what is done - the page shows both without a reload:
 
+    python3 ~/.claude/skills/diff-desk/desk.py reply 3 "it happens because ..."
     python3 ~/.claude/skills/diff-desk/desk.py resolve 3 4 --answer "fixed in abc1234"
+    python3 ~/.claude/skills/diff-desk/desk.py resolve 3 --reopen
+    python3 ~/.claude/skills/diff-desk/desk.py edit 3 "what I actually meant ..."
 
-`desk.py comments [--all]` lists what is outstanding. Start a fresh `watch` after each batch; it resumes from the
-current end unless given `--since N`.
+Reply when the answer needs discussing, resolve when it is settled - a resolved thread keeps its remark and every
+reply, and the reviewer can reopen it. Resolving a comment that was posted to a pull request also resolves its thread
+there, and says "not resolved there yet" until GitHub confirms it.
+
+`desk.py sync` carries replies both ways with the pull request and takes its word on what is resolved. Run it when the
+reviewer mentions having answered on GitHub, or before working through comments, so the two copies agree. `desk.py comments [--all]` lists what is outstanding. Start a fresh `watch`
+after each batch; it resumes from the current end unless given `--since N`.
 
 ## Behaviour to know
 
@@ -42,7 +55,15 @@ current end unless given `--since N`.
 - Reviewed-file ticks are remembered per branch and per file digest, so a file whose diff changes reopens by itself.
 - Gap expanders on each hunk header read the file at the branch revision, so context beyond the diff needs the desk
   running (they are hidden otherwise).
-- Comments are recorded whether or not GitHub is reachable; posting to a pull request is a separate opt-in tick.
+- Comments are recorded whether or not GitHub is reachable; posting to a pull request is a separate opt-in tick. A
+  post that does not land leaves its comments marked as still owed, with the reason kept, and they are retried from the
+  page - so a GitHub outage never costs a comment and never needs cleaning up by hand. A comment GitHub rejects outright
+  is marked `refused` rather than retried forever.
+- A comment can be sent on its own from the box, sent alone out of the review tray, or batched into a review; the
+  Comments panel groups comments by batch and sends them one batch at a time. All of it is recorded identically.
+- Whether a comment is bound for the pull request can be changed after it was recorded, from the page or with
+  `desk.py bind <seq...> [--local]`, for as long as it has not landed.
+- A comment whose line has left the diff is kept and marked, never resolved or dropped on the reviewer's behalf.
 
 ## Changing the page
 

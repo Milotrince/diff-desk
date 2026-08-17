@@ -4,8 +4,12 @@ Pointer handling and sticky positioning differ between engines, so these run per
 engine is skipped, never silently dropped from the run.
 """
 
+import json
+import time
+
 import pytest
 
+import gen_diff_data
 from conftest import FIRST_EDIT, SECOND_EDIT
 
 playwright = pytest.importorskip("playwright.sync_api")
@@ -47,6 +51,17 @@ def page(browser, desk):
     opened.close()
 
 
+def until(question, seconds=10.0):
+    """Wait for a state the desk reports rather than for a guessed number of milliseconds."""
+    limit = time.monotonic() + seconds
+    while time.monotonic() < limit:
+        answer = question()
+        if answer:
+            return answer
+        time.sleep(0.1)
+    raise AssertionError("the desk never reported it")
+
+
 def rows(page, kind=""):
     return page.locator(f"tr{kind}[data-line]")
 
@@ -59,37 +74,58 @@ def sample(page):
 def submit(page, text):
     """Write the comment, add it to the review, and send the batch: recording happens on the send, not the write."""
     page.locator("tr[data-composer='true'] textarea").fill(text)
-    page.locator("tr[data-composer='true'] button.solid").click()
+    page.locator("tr[data-composer='true'] button.solid:not(.direct)").click()
     page.wait_for_selector("#tray[data-open='true']")
     page.locator("#traysend").click()
     page.wait_for_function("() => document.getElementById('tray').dataset.open === 'false'")
 
 
+def submit_alone(page, text):
+    """Send one comment straight from the box, without it waiting in the review tray."""
+    page.locator("tr[data-composer='true'] textarea").fill(text)
+    page.locator("tr[data-composer='true'] button.solid.direct").click()
+    page.wait_for_function("() => document.querySelectorAll(\"tr[data-composer='true']\").length === 0")
+
+
 def drag(page, first, last, column):
-    """Press on one row and pull to another, the way a hand does it: in small steps, over the given column."""
+    """Press on one row and pull to another, the way a hand does it: in small steps, over the given column.
+
+    A cursor cannot leave the window, so a target below the fold is reached by holding near the edge until the page has
+    scrolled it into view, then releasing on it - which is also what exercises the drag's own edge scrolling.
+    """
     where = {"pin": "button.pin", "rail": "td.ln", "code": "td.code"}[column]
+    # Press on something in view, the way a hand has to: mid-viewport, clear of the header floating over the top.
+    first.evaluate("node => node.scrollIntoView({block: 'center'})")
+    page.wait_for_timeout(80)
     if column == "pin":
         first.locator("td.code").first.hover()
     start = first.locator(where).first.bounding_box()
-    end = last.locator("td.code" if column == "pin" else where).first.bounding_box()
     x0, y0 = start["x"] + start["width"] / 2, start["y"] + start["height"] / 2
-    x1, y1 = end["x"] + end["width"] / 2, end["y"] + end["height"] / 2
+    tall = page.viewport_size["height"]
     page.mouse.move(x0, y0)
     page.mouse.down()
-    held = 0
-    steps = max(8, int(abs(y1 - y0) / 3))
-    for step in range(1, steps + 1):
-        page.mouse.move(x0 + (x1 - x0) * step / steps, y0 + (y1 - y0) * step / steps)
-        held = max(held, page.locator("tr.sel").count())
+    for _ in range(60):
+        end = last.locator("td.code" if column == "pin" else where).first.bounding_box()
+        y1 = end["y"] + end["height"] / 2
+        x1 = end["x"] + end["width"] / 2 if column != "pin" else x0
+        if 40 < y1 < tall - 40:
+            page.mouse.move(x1, y1)
+            break
+        # Out of view in whichever direction: hold near that edge and let the page scroll the target in.
+        page.mouse.move(x0, 20 if y1 <= 40 else tall - 20)
+        page.wait_for_timeout(40)
+    # What the range holds at the moment of release, which is what the release must not change.
+    held = page.locator("tr.sel").count()
     page.mouse.up()
     page.wait_for_timeout(80)
     return held, page.locator("tr.sel").count()
 
 
-@pytest.mark.parametrize("column", ["pin", "rail", "code"])
+@pytest.mark.parametrize("column", ["pin", "rail"])
 @pytest.mark.parametrize("upward", [False, True])
 def test_dragging_lines_selects_the_range_and_opens_the_box(page, column, upward):
-    lines = rows(page)
+    # Within one file: a range belongs to a single diff, so the rows are taken from one card rather than by position.
+    lines = sample(page).locator("tr[data-line]")
     first, last = (lines.nth(9), lines.nth(2)) if upward else (lines.nth(2), lines.nth(9))
     held, kept = drag(page, first, last, column)
     assert held >= 4
@@ -132,14 +168,387 @@ def test_clicking_one_line_comments_on_that_line_alone(page, desk):
     assert not note.get("endLine") or note["endLine"] == note["line"]
 
 
-def test_selecting_text_inside_a_line_stays_a_text_selection(page):
-    box = rows(page).nth(4).locator("td.code").first.bounding_box()
-    page.mouse.move(box["x"] + 20, box["y"] + box["height"] / 2)
+def test_a_thread_can_be_answered_rewritten_closed_and_reopened_from_the_page(page, desk):
+    line = sample(page).locator("tr.a[data-line]").first
+    line.locator("td.code").first.hover()
+    line.locator("button.pin").first.click()
+    submit(page, "the remark as first written")
+    seq = desk.get("/comments")[-1]["seq"]
+    thread = page.locator(f"#note-{seq}")
+
+    thread.locator("textarea").fill("a reply from the reviewer")
+    thread.locator("button.ghost").filter(has_text="Reply").click()
+    page.wait_for_function(f"() => document.querySelectorAll('#note-{seq} .reply').length === 1")
+    said = {row["seq"]: row for row in desk.get("/comments")}[seq]
+    assert [(reply["who"], reply["text"]) for reply in said["replies"]] == [("you", "a reply from the reviewer")]
+
+    thread = page.locator(f"#note-{seq}")
+    thread.locator("button.tiny").filter(has_text="Edit").click()
+    thread.locator("textarea").first.fill("the remark, rewritten")
+    thread.locator("button.solid").filter(has_text="Save").click()
+    page.wait_for_timeout(400)
+    rewritten = {row["seq"]: row for row in desk.get("/comments")}[seq]
+    assert rewritten["text"] == "the remark, rewritten"
+    # Rewriting keeps what it said before, so an edit never silently rewrites history.
+    assert [earlier["text"] for earlier in rewritten["edits"]] == ["the remark as first written"]
+
+    page.locator(f"#note-{seq} button.solid").filter(has_text="Resolve").click()
+    page.wait_for_timeout(400)
+    assert {row["seq"]: row for row in desk.get("/comments")}[seq]["state"] == "resolved"
+    # A resolved thread folds to its remark alone: its replies and its actions are one click away, never discarded.
+    folded = page.locator(f"#note-{seq} .thread.folded")
+    assert folded.count() == 1
+    assert page.locator(f"#note-{seq} .reply").count() == 0
+    assert page.locator(f"#note-{seq} textarea").count() == 0
+    page.locator(f"#note-{seq} button.tiny").filter(has_text="resolved").click()
+    page.wait_for_timeout(200)
+    assert page.locator(f"#note-{seq} .thread.folded").count() == 0
+    assert page.locator(f"#note-{seq} .reply").count() == 1
+    page.locator(f"#note-{seq} button.ghost").filter(has_text="Reopen").click()
+    page.wait_for_timeout(400)
+    reopened = {row["seq"]: row for row in desk.get("/comments")}[seq]
+    assert reopened["state"] == "open"
+    # Closing and reopening leave the thread exactly as it was: no reply invented, none dropped.
+    assert reopened["text"] == "the remark, rewritten"
+    assert [reply["text"] for reply in reopened["replies"]] == ["a reply from the reviewer"]
+
+
+def test_one_comment_can_be_sent_without_a_batch(page, desk):
+    line = sample(page).locator("tr.a[data-line]").first
+    where = int(line.get_attribute("data-line"))
+    line.locator("td.code").first.hover()
+    line.locator("button.pin").first.click()
+    before = len(desk.get("/comments"))
+    submit_alone(page, "sent straight from the box")
+    page.wait_for_timeout(300)
+    rows = desk.get("/comments")
+    # Recorded on its own, and the tray is never involved.
+    assert len(rows) == before + 1
+    assert rows[-1]["text"] == "sent straight from the box"
+    assert rows[-1]["line"] == where
+    assert page.locator("#tray[data-open='true']").count() == 0
+
+
+def test_the_file_list_follows_the_folders(page):
+    folders = page.locator("#filelist .folder")
+    assert folders.count() >= 1
+    names = [name.strip() for name in page.locator("#filelist .foldername .name").all_inner_texts()]
+    # A chain of single-child directories is one row, so a deep path does not cost a level of nesting per segment.
+    assert "pkg/sub" in names
+    shelf = page.locator("#filelist .folder").filter(has=page.locator(".foldername", has_text="pkg/sub")).first
+    assert shelf.get_attribute("data-open") == "true"
+    inside = shelf.locator(".fileitem")
+    assert inside.count() >= 1
+    # A folder folds away, and stays folded across reloads so a deep diff can be read a directory at a time.
+    shelf.locator(".foldername").first.click()
+    assert shelf.get_attribute("data-open") == "false"
+    page.reload(wait_until="load")
+    page.wait_for_selector("#filelist .folder")
+    again = page.locator("#filelist .folder").filter(has=page.locator(".foldername", has_text="pkg/sub")).first
+    assert again.get_attribute("data-open") == "false"
+    # Walking onto a file inside a folded folder reveals it rather than marking something out of sight.
+    page.keyboard.press("j")
+    page.keyboard.press("j")
+    page.wait_for_timeout(200)
+    current = page.locator("#filelist .fileitem[data-current='true']")
+    assert current.count() == 1
+    assert current.first.is_visible()
+    again.locator(".foldername").first.click()
+    page.evaluate("() => localStorage.removeItem('diffdesk.folded')")
+
+
+def test_a_comment_keeps_its_code_and_its_line_breaks(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    pasted = "Try this instead:\n\n```python\nif x:\n    return math.pi * r**2\n```\n\nand call `area()` after."
+    desk.post("/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": pasted}])
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    thread = page.locator(".thread").filter(has=page.locator("pre code")).first
+    block = thread.locator("pre code").first
+    # The fence becomes a code block keeping its indentation, and its language line is a label rather than code.
+    assert block.inner_text() == "if x:\n    return math.pi * r**2"
+    assert "python" not in block.inner_text()
+    assert thread.locator("code", has_text="area()").count() == 1
+    # Text a reviewer pastes is text: it never becomes part of the page.
+    hostile = "<script>window.broken = 1</script> and <b>bold</b>"
+    desk.post(
+        "/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": hostile}]
+    )
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    assert page.evaluate("() => window.broken") is None
+    assert page.locator(".thread b").count() == 0
+    assert page.locator(".thread .said", has_text="<b>bold</b>").count() >= 1
+
+
+def test_a_local_comment_can_be_turned_towards_the_pull_request(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    made = desk.post(
+        "/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": "local first"}]
+    )
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    thread = page.locator(f"#note-{made['seq']}")
+    standing = thread.locator("button.mark").first
+    assert standing.inner_text() == "local only"
+    # The decision is changeable after the fact, so a comment written before deciding does not have to be rewritten.
+    standing.click()
+    page.wait_for_timeout(400)
+    assert {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]["github"] in ("pending", "failed", "refused")
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    back = page.locator(f"#note-{made['seq']} button.mark").first
+    assert back.inner_text() != "local only"
+    back.click()
+    page.wait_for_timeout(400)
+    assert {row["seq"]: row for row in desk.get("/comments")}[made["seq"]]["github"] == "none"
+
+
+def test_a_folded_thread_says_what_it_is_about_even_when_it_is_only_code(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    made = desk.post(
+        "/comments",
+        [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": "```py\nreturn 1\n```"}],
+    )
+    desk.post("/resolve", {"seq": [made["seq"]], "who": "session"})
+    page.reload(wait_until="load")
+    page.wait_for_selector(f"#note-{made['seq']} .thread.folded")
+    said = page.locator(f"#note-{made['seq']} .said").first
+    # Folded to one line, and a comment made only of code still says what it is about rather than showing nothing.
+    assert said.inner_text().strip() == "return 1"
+    # Everything hanging under a diff is sized to what is on screen, so nothing sits beyond the right edge.
+    fits = page.evaluate(f"""() => {{
+      const thread = document.querySelector('#note-{made["seq"]} .thread');
+      const body = thread.closest('.body');
+      return thread.getBoundingClientRect().width <= body.clientWidth + 1;
+    }}""")
+    assert fits
+
+
+def test_a_comment_stays_inside_the_view_when_the_diff_is_scrolled(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    long = "A remark long enough to need clipping: " + "the quick brown fox jumps over the lazy dog. " * 12
+    desk.post("/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": long}])
+    # Narrow enough that the diff's own lines overflow, which is when a comment used to be dragged off with them.
+    page.set_viewport_size({"width": 820, "height": 900})
+    page.reload(wait_until="load")
+    page.wait_for_selector(".thread")
+    for shift in (0, 400):
+        held = page.evaluate(
+            """(shift) => {
+              const thread = document.querySelector('.thread');
+              const body = thread.closest('.body');
+              body.scrollTo({left: shift});
+              return new Promise((done) => setTimeout(() => {
+                const seen = body.getBoundingClientRect();
+                const box = thread.getBoundingClientRect();
+                const line = thread.querySelector('.line');
+                done({
+                  leftGap: Math.round(box.left - seen.left),
+                  rightGap: Math.round(seen.right - box.right),
+                  lastInside: Math.round(line.lastElementChild.getBoundingClientRect().right) <= Math.round(seen.right),
+                });
+              }, 250));
+            }""",
+            shift,
+        )
+        # Flush with what is on screen at any scroll position, so nothing it carries is ever out of reach.
+        assert held["leftGap"] == 0
+        assert held["rightGap"] == 0
+        assert held["lastInside"]
+    page.set_viewport_size({"width": 1500, "height": 900})
+
+
+def test_a_pending_comment_can_be_sent_on_its_own_from_the_tray(page, desk):
+    lines = sample(page).locator("tr.a[data-line]")
+    for index, text in ((0, "the first remark"), (1, "the second remark")):
+        line = lines.nth(index)
+        line.locator("td.code").first.hover()
+        line.locator("button.pin").first.click()
+        page.locator("tr[data-composer='true'] textarea").fill(text)
+        page.locator("tr[data-composer='true'] button.solid:not(.direct)").click()
+    assert page.locator("#traylist li").count() == 2
+    before = len(desk.get("/comments"))
+
+    page.locator("#traylist li button.tiny").first.click()
+    # One leaves, the rest stay pending: a review is not held up by the comment still being thought about.
+    page.wait_for_function("() => document.querySelectorAll('#traylist li').length === 1")
+    until(lambda: len(desk.get("/comments")) == before + 1)
+    assert page.locator("#tray").get_attribute("data-open") == "true"
+    rows = desk.get("/comments")
+    assert len(rows) == before + 1
+    assert rows[-1]["text"] == "the first remark"
+    page.locator("#traydrop").click()
+
+
+def test_each_recorded_batch_can_be_sent_by_itself(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    for text in ("first batch", "second batch"):
+        desk.post(
+            "/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": text}]
+        )
+    listed = desk.get("/comments")
+    batches = [row["batch"] for row in listed[-2:]]
+    assert batches[0] != batches[1]
+
+    # A pull request is what makes sending possible, so the repository is given one for the length of this test.
+    knows = [
+        {"match": "repos/someone/somewhere --jq", "out": "someone/somewhere"},
+        {"match": "pr list", "out": json.dumps([{"number": 7, "url": "u", "title": "t", "headRefName": branch}])},
+    ]
+    desk.github_answers(rules=knows)
+    gen_diff_data.run(desk.repo, "remote", "add", "origin", "https://github.com/someone/somewhere.git")
+    try:
+        rescan = desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})
+        assert rescan["ok"], rescan.get("error")
+        page.reload(wait_until="load")
+        page.wait_for_selector("section.file")
+        page.locator("#logopen").click()
+        page.wait_for_selector("#log[data-open='true']")
+        groups = page.locator("#logrows .batch")
+        assert groups.count() >= 2
+        sends = page.locator("#logrows .batchhead button.tiny")
+        # Every batch still holding something unposted can be sent by itself; one already on the PR offers nothing.
+        pending = {
+            row["batch"] for row in desk.get("/comments") if row["branch"] == branch and row["github"] != "posted"
+        }
+        assert sends.count() == len(pending)
+        assert "PR #7" in sends.last.inner_text()
+
+        # Sending one batch leaves the others exactly as they were.
+        landed = {"match": "/reviews", "out": json.dumps({"html_url": "https://github.com/x/y/pull/7#review-9"})}
+        desk.github_answers(rules=[landed, *knows])
+        sends.last.click()
+        after = until(
+            lambda: (
+                {row["seq"]: row for row in desk.get("/comments")}
+                if {row["seq"]: row for row in desk.get("/comments")}[listed[-1]["seq"]]["github"] == "posted"
+                else None
+            )
+        )
+        # Sending one batch leaves every other comment exactly as it was.
+        assert after[listed[-1]["seq"]]["github"] == "posted"
+        assert after[listed[-2]["seq"]]["github"] == "none"
+    finally:
+        gen_diff_data.run(desk.repo, "remote", "remove", "origin")
+        desk.github_answers(code=1, err="gh: Not Found (HTTP 404)")
+        desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})
+
+
+def test_a_comment_resolved_here_does_not_claim_the_pull_request_agrees(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [
+                {
+                    "branch": branch,
+                    "path": "sample.py",
+                    "line": FIRST_EDIT,
+                    "side": "new",
+                    "text": "a remark of its own",
+                }
+            ],
+            "github": True,
+        },
+    )
+    seq = made["seqs"][0]
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/y/pull/3#review-2"}))
+    desk.post("/publish", {"repo": "someone/somewhere", "pr": 3, "seq": [seq]})
+    # Whatever the page sweeps in the background cannot reach GitHub, so the pull request is left unasked.
+    desk.github_answers(code=1, err="dial tcp: lookup api.github.com: no such host")
+    desk.post("/resolve", {"seq": [seq], "who": "session"})
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+
+    page.locator("#logopen").click()
+    page.wait_for_selector("#log[data-open='true']")
+    row = page.locator("#logrows .logrow").filter(has_text="a remark of its own").first
+    marks = row.locator(".mark").all_inner_texts()
+    # Closed here and posted there, but the thread on the pull request is not resolved - and the page must say so.
+    assert "resolved here" in marks
+    assert "on the PR" in marks
+    assert [mark for mark in marks if mark.startswith("not resolved there")]
+    assert "resolved there" not in marks
+    page.locator("#logclose").click()
+
+
+def test_the_log_says_where_every_comment_stands(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    desk.post(
+        "/comments",
+        {
+            "comments": [
+                {"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": "for a PR"}
+            ],
+            "github": True,
+        },
+    )
+    desk.post(
+        "/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": "local"}]
+    )
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    page.locator("#logopen").click()
+    page.wait_for_selector("#log[data-open='true']")
+    marks = set(page.locator("#logrows .mark").all_inner_texts())
+    assert "waiting for GitHub" in marks
+    assert "local only" in marks
+    # What is owed is offered for sending, rather than being discoverable only in a log file.
+    assert page.locator("#logretry").is_enabled()
+    assert "waiting" in page.locator("#logopen").inner_text()
+    page.locator("#logclose").click()
+
+
+def test_a_comment_whose_line_left_the_diff_is_kept_and_marked(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    desk.post(
+        "/comments",
+        [{"branch": branch, "path": "sample.py", "line": 9999, "side": "new", "text": "anchored to a vanished line"}],
+    )
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    page.wait_for_function("() => document.querySelectorAll('.thread.stale').length > 0")
+    stale = page.locator(".thread.stale").first
+    # Kept with its file and marked, never dropped from the page and never resolved on its behalf.
+    assert "anchored to a vanished line" in stale.inner_text()
+    assert stale.locator(".mark.outdated").first.inner_text() == "code moved on"
+    kept = next(row for row in desk.get("/comments") if row["line"] == 9999)
+    assert kept["state"] == "open"
+
+
+def test_a_release_the_page_never_sees_does_not_leave_it_dragging(page):
+    line = rows(page).nth(2)
+    line.locator("td.code").first.hover()
+    box = line.locator("button.pin").first.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 60)
+    assert page.locator("body.dragging").count() == 1
+    # A release outside the window is never delivered; the next motion with no button held has to end the drag, or
+    # every later hover keeps extending a range nobody is holding.
+    page.evaluate("""() => document.dispatchEvent(
+      new PointerEvent('pointermove', {clientX: 40, clientY: 40, buttons: 0, bubbles: true})
+    )""")
+    assert page.locator("body.dragging").count() == 0
+    page.mouse.up()
+
+
+def test_dragging_across_the_code_selects_the_code(page):
+    lines = sample(page).locator("tr[data-line]")
+    lines.nth(2).evaluate("node => node.scrollIntoView({block: 'center'})")
+    page.wait_for_timeout(80)
+    one = lines.nth(2).locator("td.code").first.bounding_box()
+    four = lines.nth(5).locator("td.code").first.bounding_box()
+    page.mouse.move(one["x"] + 20, one["y"] + one["height"] / 2)
     page.mouse.down()
     for step in range(1, 11):
-        page.mouse.move(box["x"] + 20 + step * 12, box["y"] + box["height"] / 2)
+        page.mouse.move(one["x"] + 20 + step * 8, one["y"] + (four["y"] - one["y"]) * step / 10)
+        page.wait_for_timeout(10)
     page.mouse.up()
-    assert page.locator("tr.sel").count() <= 1
+    # Dragging over code is how code is copied, so it selects text and starts no range and no comment box.
+    assert page.evaluate("() => String(window.getSelection()).length") > 10
+    assert page.locator("tr.sel").count() == 0
     assert page.locator("tr[data-composer='true']").count() == 0
 
 
@@ -188,6 +597,21 @@ def test_expanding_every_gap_reaches_the_whole_file(page):
     }""")
     assert shown["first"] == 1
     assert shown["lines"] >= SECOND_EDIT
+
+
+def test_the_source_panel_lists_what_can_be_reviewed(page):
+    page.locator("#source > summary").click()
+    page.wait_for_selector("#srcrefs label")
+    listed = page.locator("#srcrefs label")
+    assert listed.count() >= 1
+    assert "feature" in listed.first.inner_text()
+    # The branch under review is already ticked, so a rescan does not silently drop it.
+    assert listed.first.locator("input").is_checked()
+    # Pull requests are listed only where there are any, so a plain local repository shows branches alone.
+    assert page.locator("#srcpulls label").count() == 0
+    page.locator("#srcfilter").fill("nothing matches this")
+    assert page.locator("#srcrefs label").count() == 1
+    page.locator("#srcfilter").fill("")
 
 
 @pytest.mark.parametrize("width", [1500, 1000, 760])

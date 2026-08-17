@@ -43,6 +43,9 @@ def repo(tmp_path_factory):
     body = [f"line {number}" for number in range(1, FILE_LINES + 1)]
     (root / "sample.py").write_text("\n".join(body) + "\n")
     (root / "kept.py").write_text("untouched\n")
+    # A file a couple of directories down, so the file list has a tree to draw and a chain to fold.
+    (root / "pkg" / "sub").mkdir(parents=True)
+    (root / "pkg" / "sub" / "deep.py").write_text("one\ntwo\nthree\n")
     git(root, "add", "-A")
     git(root, "commit", "-m", "the file under review")
     git(root, "checkout", "-q", "-b", "feature")
@@ -50,6 +53,7 @@ def repo(tmp_path_factory):
     body[SECOND_EDIT - 1] = f"line {SECOND_EDIT} rewritten"
     (root / "sample.py").write_text("\n".join(body) + "\n")
     (root / "added.py").write_text("brand new\n")
+    (root / "pkg" / "sub" / "deep.py").write_text("one\ntwo rewritten\nthree\n")
     git(root, "add", "-A")
     git(root, "commit", "-m", "rewrite two lines and add a file")
     git(root, "checkout", "-q", "main")
@@ -65,6 +69,20 @@ class Desk:
         self.url = url
         self.repo = repo
         self.home = home
+
+    def github_answers(self, code=0, out="", err="", rules=()):
+        """What the stand-in for gh replies to the next call, so every arm of a post can be exercised in place.
+
+        A rule is `{"match": <text found in the arguments>, "out"/"err"/"code": ...}`, for a run where resolving a
+        repository, listing its pull requests and posting a review must be answered differently.
+        """
+        reply = {"code": code, "out": out, "err": err, "rules": list(rules)}
+        (self.home / "fake_gh.json").write_text(json.dumps(reply))
+
+    def github_calls(self):
+        """Everything the stand-in for gh was asked, in order, so a test can prove a call was made."""
+        told = self.home / "fake_gh.log"
+        return told.read_text().splitlines() if told.exists() else []
 
     def get(self, route):
         with urllib.request.urlopen(f"{self.url}{route}", timeout=30) as answer:
@@ -89,12 +107,21 @@ def desk(repo, tmp_path_factory):
     process = subprocess.Popen(
         [sys.executable, str(ROOT / "desk.py"), "serve", "--dir", str(repo), "--base", "main", "feature"],
         cwd=ROOT,
-        env={**os.environ, "DIFF_DESK_HOME": str(home), "DIFF_DESK_PORT": str(port)},
+        env={
+            **os.environ,
+            "DIFF_DESK_HOME": str(home),
+            "DIFF_DESK_PORT": str(port),
+            # GitHub is answered for by a stand-in, so posting is exercised without a network or a login.
+            "DIFF_DESK_GH": f"{sys.executable} {ROOT / 'tests' / 'fake_gh.py'}",
+            "FAKE_GH_SCRIPT": str(home / "fake_gh.json"),
+            "FAKE_GH_LOG": str(home / "fake_gh.log"),
+        },
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
     )
     running = Desk(f"http://127.0.0.1:{port}", repo, home)
+    running.github_answers(code=1, err="gh: Not Found (HTTP 404)")
     for _ in range(200):
         if process.poll() is not None:
             pytest.fail(f"the desk exited: {process.stdout.read()}")

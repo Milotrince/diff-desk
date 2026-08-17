@@ -14,19 +14,57 @@ It needs `git`, `gh` and python3. Nothing else - no build step, no packages, no 
 
     python3 desk.py serve --dir /path/to/repo --base upstream/main [refs ...]
 
-Omit the refs to be offered every local branch ahead of the base. The checked-out branch is shown with its
-uncommitted work included, so a review can start before a commit exists. Repository, base and branches can also be
-switched from the page's own Source panel, without restarting anything.
+What can be reviewed:
+
+- **Local branches.** Omit the refs entirely to be offered every local branch ahead of the base. The checked-out
+  branch is shown with its uncommitted work included, so a review can start before a commit exists.
+- **Pull requests, by number** - `3243`, `#3243` or `pr/3243`. The head is fetched from the upstream repository by
+  number, so neither the fork it lives on nor the branch name it uses has to be known, and a head force-pushed since
+  the last look is picked up. It lands in `refs/diffdesk/pull/<number>`, out of the way of your own branches. One
+  fetched earlier stays reviewable while GitHub is unreachable: what cannot be read falls back to the head on disk.
+
+Both can be reviewed side by side in one desk, as tabs. Repository, base, branches and pull requests can also be
+switched from the page's own Source panel, without restarting anything - it lists the branches ahead of the base and
+every open pull request, filterable together.
 
 On the page:
 
-- **Drag over lines** - anywhere on the line, or over the `+` - to select a range, and let go to open the comment box.
-  A range may cover removed and added lines together.
+- **Drag the line numbers or the `+`** to select a range, and let go to open the comment box. A range may cover removed
+  and added lines together. Dragging across the code selects the code, as anywhere else - that is how it is copied.
 - **`+20 up` / `+20 down` / `all N`** on each hunk header, and `+20 below` at the end of a file, bring in the lines the
   diff left out, read from the file at that branch's revision.
 - **Reviewed** folds a file away. The tick is remembered per branch and per file digest, so a file whose diff changes
   reopens itself rather than staying silently ticked.
-- **Submit review** sends the whole batch at once, with an optional overall note.
+- **Send** in the comment box posts that one comment immediately; **Add to review** keeps it for a batch that goes out
+  together with **Submit review** and an optional overall note. Both take the same path, so a lone comment is recorded,
+  threaded and posted exactly like a batch.
+- **Nothing has to go out all at once.** Each comment waiting in the review tray has its own Send, leaving the rest
+  pending, and the Comments panel groups everything by the batch it was written in, with a Send for each - so batches go
+  to the pull request one at a time, in whatever order suits.
+- **Every comment is a thread.** Either side can reply, and either side can resolve or reopen it. Resolving folds the
+  thread to its remark alone and keeps every reply behind one click; nothing is ever deleted.
+- **Resolving one that reached the pull request resolves it there too**, by finding the thread its text opened and
+  resolving that. Until GitHub confirms it, the comment reads "resolved here" and "not resolved there yet" rather than
+  claiming agreement it does not have; a resolution that could not be made is retried like a post that did not land.
+- **Sync with the PR** carries replies both ways: what was written here is posted into the thread it belongs to, what
+  was written there is brought back and shown with its author. Resolution travels both ways too - a thread resolved on
+  the pull request is closed here, since that is the copy everyone else reads, and one closed here is resolved there.
+  Syncing twice sends nothing twice.
+- **Code stays code.** A fenced block keeps its indentation as a code block, backticks stay inline code, and line
+  breaks stay where you put them. Pasted text is only ever text, never markup the page acts on.
+- **Edit** rewrites a comment and keeps what it said before. One already posted to a pull request is marked as having
+  moved on from what the pull request holds.
+- **Comments** in the header opens the log: every comment on the branch, whether it is open or resolved, whether it is
+  waiting for GitHub, already on the pull request, or local only. Clicking one jumps to it.
+- **The standing of a comment is a control, not a label.** Click "local only" on a comment to send that one to the pull
+  request, or the panel's button to send every local one at once; click it again to keep a comment out. The decision
+  stays changeable until it lands, so a comment written before deciding never has to be written twice.
+
+A comment whose line is no longer in the diff - the branch moved on, the code was rewritten - is **kept**, marked "code
+moved on", and shown at the end of the file it belonged to. It is never resolved or deleted on your behalf.
+- **The file list is a tree** following the repository's folders, each foldable and remembered across reloads, with a
+  count per folder. A chain of single-child directories is one row, so a deep path costs one line and not one per
+  level. Walking onto a file inside a folded folder reveals it.
 - **Changes only** hides context lines; **Hide reviewed** clears what you are done with; `j`/`k` walk the files, `/`
   filters them, `c` comments on the selection, `r` marks the current file reviewed.
 
@@ -37,13 +75,16 @@ arrived in. A session waits for one with:
 
     python3 desk.py watch
 
-which blocks until a batch lands, prints it as `[seq] branch path:line-endLine (side) text`, and exits. After
-addressing them:
+which blocks until a batch lands, prints each comment as `[seq] branch path:line-endLine (side) text` with its state
+and any replies, and exits. A session then answers, closes, or rewrites them:
 
-    python3 desk.py resolve 3 4 --answer "fixed in abc1234"
+    python3 desk.py reply 3 "it happens because ..."          # answer, leaving it open
+    python3 desk.py resolve 3 4 --answer "fixed in abc1234"   # answer and close
+    python3 desk.py resolve 3 --reopen                        # put one back
+    python3 desk.py edit 3 "what I actually meant ..."        # rewrite, keeping the earlier wording
 
-The page picks that up on its own and shows those comments closed, with the answer beside them. `desk.py comments`
-lists what is still outstanding.
+The page picks all of that up on its own, threading the replies under the comment. `desk.py comments` lists what is
+still outstanding, with each thread's replies and where it stands with GitHub.
 
 As a Claude Code skill, drop this repository into `~/.claude/skills/diff-desk/` and the flow above needs no
 explaining - `SKILL.md` tells the session how to serve a review, wait for comments, and close them out.
@@ -52,15 +93,28 @@ explaining - `SKILL.md` tells the session how to serve a review, wait for commen
 
 When a branch has an open pull request, the tray offers to post the batch there as well. Ranges become GitHub range
 comments; a comment covering removed and added lines is anchored on the added side, which is the side a line range can
-be expressed on. It goes out as a single review rather than a stream of separate comments, and it is always opt-in -
-comments are recorded locally whether or not GitHub is reachable, which is what makes the desk usable when it is not.
+be expressed on. It goes out as a single review rather than a stream of separate comments, and it is always opt-in.
+
+**A post that does not land loses nothing.** The comment is written to the log before GitHub is contacted, so the order
+of events is: recorded, then attempted. A comment bound for a pull request is marked `pending` until it lands and
+`failed` if it does not, keeping the reason. Either way it stays in the log, and the log panel shows exactly how many
+are waiting.
+
+What is waiting is retried three ways: the button in the log panel, on its own every few seconds while the page is
+open, and the moment the browser reports the network is back. Retrying takes everything still owed without being told
+which, so a failure needs no bookkeeping from you. A comment never meant for the pull request is left alone by all of
+it.
+
+A refusal is told apart from a failure: when GitHub rejects the comment itself - a line outside the diff, a pull
+request that is gone, no permission - retrying cannot help, so it is marked `refused` with its reason and left in the
+log instead of being attempted forever.
 
 ## Layout
 
 | file | what it is |
 | --- | --- |
 | `desk.py` | the entry point: `serve`, `watch`, `comments`, `resolve`, `refs` |
-| `gen_diff_data.py` | turns a git range into the payload a page renders, digests included |
+| `gen_diff_data.py` | turns a git range into the payload a page renders: hunks, digests, pull request resolution |
 | `serve_diff.py` | the local server: the page, rescans, file slices, comments, resolutions, pull request posts |
 | `diff_desk_template.html` | the page itself, with `__DIFF_DATA__` and `__BUILD__` substituted at build time |
 | `SKILL.md` | how a Claude Code session drives all of the above |

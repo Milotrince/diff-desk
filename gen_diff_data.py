@@ -5,9 +5,15 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 import time
+
+
+def github():
+    """The command that talks to GitHub. Overridable so a test can answer for it without a network or a login."""
+    return shlex.split(os.environ.get("DIFF_DESK_GH", "gh"))
 
 
 def home():
@@ -32,7 +38,7 @@ def canonical_repo(root):
         if not match:
             continue
         slug = subprocess.run(
-            ["gh", "api", f"repos/{match.group(1)}", "--jq", ".full_name"],
+            [*github(), "api", f"repos/{match.group(1)}", "--jq", ".full_name"],
             capture_output=True,
             text=True,
             timeout=40,
@@ -40,6 +46,62 @@ def canonical_repo(root):
         ).stdout.strip()
         return slug or match.group(1)
     return ""
+
+
+PULL = re.compile(r"^(?:#|pr[/-])?(\d+)$", re.IGNORECASE)
+
+
+def pull_number(ref):
+    """The pull request a ref names, when it names one rather than a branch."""
+    match = PULL.match(str(ref).strip())
+    return int(match.group(1)) if match else None
+
+
+def fetch_pull(root, upstream, number):
+    """Bring a pull request's head into a local ref, and describe it.
+
+    Fetched by number through the upstream repository, so neither the fork it lives on nor the branch name it uses has
+    to be known, and a head force-pushed since the last look is picked up.
+
+    A head fetched earlier stays reviewable while GitHub is unreachable: whatever cannot be read or fetched falls back
+    to what is already on disk, and only a pull request with nothing local behind it is refused.
+    """
+    local = f"refs/diffdesk/pull/{number}"
+    held = run(root, "rev-parse", "--verify", "--quiet", local).strip()
+    fetched = {"number": number, "title": f"#{number}", "url": "", "headRefName": local}
+    if not upstream:
+        if held:
+            return local, fetched
+        raise RuntimeError(f"#{number} needs a GitHub remote to resolve against, and this repository has none")
+    wanted = "number,title,url,headRefName,baseRefName"
+    seen = subprocess.run(
+        [*github(), "pr", "view", str(number), "--repo", upstream, "--json", wanted],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        timeout=60,
+        check=False,
+    )
+    if seen.returncode == 0:
+        request = json.loads(seen.stdout)
+    elif held:
+        print(f"#{number} could not be read from {upstream}; showing the head fetched earlier", flush=True)
+        request = fetched
+    else:
+        raise RuntimeError(f"#{number} could not be read from {upstream}: {' '.join(seen.stderr.split())[:200]}")
+    brought = subprocess.run(
+        ["git", "fetch", "--quiet", f"https://github.com/{upstream}.git", f"+refs/pull/{number}/head:{local}"],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        timeout=300,
+        check=False,
+    )
+    if brought.returncode != 0:
+        if not held:
+            raise RuntimeError(f"#{number} could not be fetched: {' '.join(brought.stderr.split())[:200]}")
+        print(f"#{number} could not be fetched; showing the head fetched earlier", flush=True)
+    return local, request
 
 
 def render_page(template, payload):
@@ -106,7 +168,7 @@ def pull_requests(root, upstream):
     a request each and a single hiccup silently drops that branch's link."""
     out = subprocess.run(
         [
-            "gh",
+            *github(),
             "pr",
             "list",
             "--repo",
@@ -156,7 +218,12 @@ def collect(root, base, refs, upstream=None):
         "upstream": upstream,
         "branches": [],
     }
-    for ref in refs:
+    for wanted in refs:
+        number = pull_number(wanted)
+        request = None
+        ref = wanted
+        if number is not None:
+            ref, request = fetch_pull(root, upstream, number)
         commits = []
         log = run(root, "log", "--format=%h%x1f%s", f"{base}..{ref}").strip().split("\n")
         for row in reversed([line for line in log if line]):
@@ -177,8 +244,8 @@ def collect(root, base, refs, upstream=None):
         data["branches"].append(
             {
                 "ref": ref,
-                "blurb": ref.split("/")[-1].replace("_", " "),
-                "pr": requests.get(ref),
+                "blurb": f"#{number}" if number else ref.split("/")[-1].replace("_", " "),
+                "pr": request or requests.get(ref),
                 "tip": run(root, "rev-parse", "--short", ref).strip(),
                 # Empty means the working tree, which is what the checked-out branch is shown as.
                 "rev": "" if ref == current else ref,
