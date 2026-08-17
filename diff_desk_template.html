@@ -95,16 +95,24 @@
     top: 0;
     z-index: 30;
     display: flex;
-    flex-wrap: wrap;
+    /* One line, in three groups: what is being reviewed, how it is being looked at, what has come of it. Wrapping is
+       what made this messy, so the parts that can give way shrink or step aside instead. */
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 10px 16px;
-    padding: 12px 20px;
+    gap: 10px;
+    padding: 10px 20px;
+    /* Sideways rather than clipped, so nothing in the bar is ever out of reach however narrow the window. */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
     background: color-mix(in srgb, var(--surface) 88%, transparent);
     backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--rule);
   }
 
-  .brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+  .brand { display: flex; align-items: baseline; gap: 8px; flex: none; min-width: 0; }
+  .brand h1 { white-space: nowrap; }
+  .brand .base { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .brand h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
   .brand .base { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
@@ -137,10 +145,14 @@
     padding: 6px 9px;
   }
   select { max-width: 44ch; }
-  .search { position: relative; display: flex; align-items: center; }
-  .search input { width: 20ch; padding-left: 26px; }
+  /* The filter takes what the rest does not need, and gives it back first. */
+  .search { position: relative; display: flex; align-items: center; flex: 1 1 12ch; min-width: 8ch; margin-right: auto; }
+  .search input { width: 100%; min-width: 0; padding-left: 26px; }
   .search svg { position: absolute; left: 8px; width: 13px; height: 13px; color: var(--faint); }
-  .toggle { cursor: pointer; }
+  /* Never let a label fold onto a second line: that is what turned the bar into two rows. */
+  .toggle { cursor: pointer; flex: none; white-space: nowrap; }
+  #scope { flex: none; max-width: 26ch; }
+  .tabs { flex: none; }
   .toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
   select:focus-visible, .toggle:focus-visible, input:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -148,6 +160,7 @@
   .totals .plus { color: var(--add-ink); }
   .totals .minus { color: var(--del-ink); }
 
+  .tally { display: flex; align-items: center; gap: 12px; flex: none; }
   .progress { display: flex; align-items: center; gap: 7px; }
   .progress .track { width: 74px; height: 5px; border-radius: 3px; background: var(--rule); overflow: hidden; }
   .progress .track i { display: block; height: 100%; background: var(--add-ink); }
@@ -593,15 +606,24 @@
   button.expand:hover { color: var(--accent); border-color: var(--accent); }
   tr.h .at { color: var(--faint); }
 
+  /* Narrower views drop what can be read elsewhere, rather than folding the bar onto a second line: the totals are in
+     each file's header, the tally in the file list, and what is being reviewed in the Source panel. */
+  @media (max-width: 1380px) { .totals { display: none; } }
+  @media (max-width: 1180px) { .tally { display: none; } }
+  @media (max-width: 1020px) { .brand .base { display: none; } }
+  @media (max-width: 900px) { .brand h1 { display: none; } }
+
+  header::-webkit-scrollbar { display: none; }
+
   .empty { padding: 40px 8px; color: var(--muted); text-align: center; }
   kbd { font-family: var(--mono); font-size: 10.5px; padding: 1px 5px; border: 1px solid var(--rule-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--surface); color: var(--muted); }
   .hint { padding: 8px 4px 10px; color: var(--faint); font-size: 11px; line-height: 1.8; }
 </style>
 
 <header>
-  <div class="brand">
+  <div class="brand" id="brand" data-built="__BUILD__">
     <h1>Diff Desk</h1>
-    <span class="base"><span id="repo"></span> · base <span id="base"></span> · <span class="stamp">__BUILD__</span></span>
+    <span class="base"><span id="repo"></span></span>
   </div>
   <details class="source" id="source">
     <summary title="Choose the repository, the base and the branches to review">Source</summary>
@@ -625,16 +647,17 @@
   </label>
   <button class="toggle" id="ctx" aria-pressed="false" title="Show only added and removed lines">Changes only</button>
   <button class="toggle" id="hidedone" aria-pressed="false" title="Hide the files marked reviewed">Hide reviewed</button>
-  <div class="progress" title="Files marked reviewed">
-    <span class="track"><i id="pfill" style="width:0%"></i></span>
-    <span class="label num" id="ptext"></span>
-  </div>
-  <div class="totals">
-    <span class="plus num" id="tplus"></span>
-    <span class="minus num" id="tminus"></span>
+  <div class="tally">
+    <div class="progress" title="Files marked reviewed">
+      <span class="track"><i id="pfill" style="width:0%"></i></span>
+      <span class="label num" id="ptext"></span>
+    </div>
+    <div class="totals">
+      <span class="plus num" id="tplus"></span>
+      <span class="minus num" id="tminus"></span>
+    </div>
   </div>
   <button class="toggle" id="logopen" title="Every comment recorded, and where each one stands">Comments</button>
-  <span class="status" id="status"></span>
 </header>
 
 <div class="log" id="log" data-open="false">
@@ -691,13 +714,14 @@
   const unfolded = new Set();
 
   const els = {};
-  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "status", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "repo", "base", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
+  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "brand", "repo", "source", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
     els[id] = document.getElementById(id);
   }
 
   function showSource() {
     els.repo.textContent = data.name || "";
-    els.base.textContent = data.base;
+    // The base and the moment this page was built are worth having, not worth a line of the bar: they live in the title.
+    els.brand.title = `base ${data.baseRef} at ${data.base} \u00b7 ${els.brand.dataset.built}`;
     els.srcdir.value = data.root || "";
     els.srcbase.value = data.baseRef || "upstream/main";
   }
@@ -793,7 +817,7 @@
     if (owed) bits.push(`${owed} waiting for GitHub`);
     bits.push(notes.live ? "watched by Claude" : "kept in this browser");
     if (staleCount) bits.push(`${staleCount} reopened`);
-    els.status.innerHTML = bits.join(" \u00b7 ");
+    els.logopen.title = bits.join(" \u00b7 ");
   }
 
   const span = (note) =>

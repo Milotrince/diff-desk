@@ -760,6 +760,28 @@ def test_the_source_panel_lists_what_can_be_reviewed(page):
     page.locator("#srcfilter").fill("")
 
 
+@pytest.mark.parametrize("width", [1900, 1400, 1100, 900])
+def test_the_top_bar_holds_one_line(page, width):
+    page.set_viewport_size({"width": width, "height": 900})
+    page.wait_for_timeout(120)
+    bar = page.evaluate("""() => {
+      const head = document.querySelector('header');
+      const kids = [...head.children].filter((node) => node.offsetParent !== null);
+      return {
+        height: Math.round(head.getBoundingClientRect().height),
+        tallest: Math.max(...kids.map((node) => Math.round(node.getBoundingClientRect().height))),
+        items: kids.length,
+        reachable: head.scrollWidth <= head.clientWidth,
+      };
+    }""")
+    # A bar as tall as its tallest control is a bar on one line; anything folded onto a second row makes it taller.
+    assert bar["height"] <= bar["tallest"] + 22
+    assert bar["items"] >= 6
+    # What a narrow window cannot fit steps aside rather than being cut off out of reach.
+    assert bar["reachable"]
+    page.set_viewport_size({"width": 1500, "height": 900})
+
+
 @pytest.mark.parametrize("width", [1500, 1000, 760])
 def test_the_pinned_file_head_clears_the_page_header(page, width):
     page.set_viewport_size({"width": width, "height": 900})
