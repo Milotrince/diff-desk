@@ -369,6 +369,48 @@ def test_a_comment_closed_before_the_pull_request_knew_of_it_is_still_owed_a_res
     assert {row["seq"]: row for row in desk.get("/comments")}[seq]["prResolve"] == "done"
 
 
+def test_one_review_never_reaches_another_review_comments(desk):
+    # One log holds every review this desk has served, so a sweep for one pull request must leave the others alone.
+    elsewhere = desk.post(
+        "/comments",
+        {
+            "comments": [
+                {"branch": "other/branch", "path": "sample.py", "line": 25, "side": "new", "text": "elsewhere"}
+            ],
+            "github": True,
+        },
+    )
+    far = elsewhere["seqs"][0]
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/x/other/pull/11#review-1"}))
+    desk.post("/publish", {"repo": "x/other", "pr": 11, "branch": "other/branch", "seq": [far]})
+    desk.post("/resolve", {"seq": [far], "who": "you"})
+
+    here = desk.post(
+        "/comments",
+        {
+            "comments": [{"branch": "feature", "path": "sample.py", "line": 26, "side": "new", "text": "right here"}],
+            "github": True,
+        },
+    )
+    near = here["seqs"][0]
+
+    # A post for this review must carry only this review's comments, not the one bound for another pull request.
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/someone/somewhere/pull/12#review-1"}))
+    desk.post("/publish", {"repo": "someone/somewhere", "pr": 12, "branch": "feature"})
+    rows = {row["seq"]: row for row in desk.get("/comments")}
+    assert rows[near]["prRepo"] == "someone/somewhere"
+    assert rows[far]["prRepo"] == "x/other"
+    assert rows[far]["reviewUrl"].endswith("other/pull/11#review-1")
+
+    # A sync for this review must not judge the other's comment against threads that were never its own.
+    empty = {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}}
+    desk.github_answers(rules=[{"match": "reviewThreads", "out": json.dumps(empty)}])
+    desk.post("/sync", {"repo": "someone/somewhere", "pr": 12, "branch": "feature"})
+    after = {row["seq"]: row for row in desk.get("/comments")}
+    assert after[far]["prResolve"] == "pending"
+    assert "prResolveError" not in after[far]
+
+
 def test_syncing_repairs_a_comment_wrongly_believed_resolved_on_the_pull_request(desk):
     made = desk.post(
         "/comments",
