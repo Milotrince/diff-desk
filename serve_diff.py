@@ -195,7 +195,16 @@ def under_review(row, order):
     """
     if row.get("prRepo") or row.get("prNumber"):
         return row.get("prRepo") == order.get("repo") and row.get("prNumber") == order.get("pr")
-    return not order.get("branch") or row.get("branch") == order.get("branch")
+    if row.get("review") and order.get("review"):
+        return row["review"] == order["review"]
+    # A comment written before a review was named this way is placed by the ref it was written on. A request naming no
+    # ref at all is asking about everything it can reach, which is what a bare repository and number mean.
+    named = {name for name in (order.get("branch"), order.get("review")) if name}
+    if not named:
+        return True
+    if order.get("pr"):
+        named |= {f"refs/diffdesk/pull/{order['pr']}", f"#{order['pr']}"}
+    return row.get("branch") in named
 
 
 def owes_resolution(row):

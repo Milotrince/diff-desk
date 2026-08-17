@@ -577,6 +577,63 @@ def test_a_file_can_be_commented_on_as_a_whole(page, desk):
     page.locator("#logclose").click()
 
 
+def test_a_review_keeps_its_comments_and_ticks_when_opened_from_another_ref(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    knows = [
+        {"match": "repos/someone/somewhere --jq", "out": "someone/somewhere"},
+        {
+            "match": "pr list",
+            "out": json.dumps([{"number": 21, "url": "u", "title": "the same work", "headRefName": branch}]),
+        },
+        {
+            "match": "pr view",
+            "out": json.dumps(
+                {"number": 21, "url": "u", "title": "the same work", "headRefName": branch, "baseRefName": "main"}
+            ),
+        },
+    ]
+    desk.github_answers(rules=knows)
+    gen_diff_data.run(desk.repo, "remote", "add", "origin", "https://github.com/someone/somewhere.git")
+    try:
+        assert desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})["ok"]
+        page.reload(wait_until="load")
+        page.wait_for_selector("section.file")
+        # A comment and a tick, made while the review is open on its branch. The remark comes first: ticking folds the
+        # file away, and a folded file has no lines to reach.
+        card = sample(page)
+        name = card.locator(".path").first.inner_text()
+        line = card.locator("tr.a[data-line]").first
+        line.locator("td.code").first.hover()
+        line.locator("button.pin").first.click()
+        submit(page, "said on the branch")
+        card.locator("input[type=checkbox]").check()
+        page.wait_for_timeout(200)
+
+        # The same review, opened from the head fetched by number instead of from the branch.
+        gen_diff_data.run(desk.repo, "update-ref", "refs/diffdesk/pull/21", branch)
+        assert desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": ["#21"]})["ok"]
+        page.reload(wait_until="load")
+        page.wait_for_selector("section.file")
+        again = page.locator("section.file").filter(has=page.locator(f"text={name}")).first
+        # Same work, so the same history: the file is still ticked, and the remark is still there under it.
+        assert again.get_attribute("data-done") == "true"
+        assert again.get_attribute("data-open") == "false"
+        again.locator("button.grow").click()
+        page.wait_for_timeout(200)
+        assert "said on the branch" in again.inner_text()
+        # The log is what this review holds, so finding the remark there is the history being attributed to it.
+        page.locator("#logopen").click()
+        page.wait_for_selector("#log[data-open='true']")
+        assert page.locator("#logrows .logrow").filter(has_text="said on the branch").count() >= 1
+        page.locator("#logclose").click()
+    finally:
+        gen_diff_data.run(desk.repo, "update-ref", "-d", "refs/diffdesk/pull/21")
+        gen_diff_data.run(desk.repo, "remote", "remove", "origin")
+        desk.github_answers(code=1, err="gh: Not Found (HTTP 404)")
+        desk.post("/scan", {"dir": str(desk.repo), "base": "main", "refs": [branch]})
+        page.evaluate("() => localStorage.clear()")
+
+
 def test_the_log_says_where_every_comment_stands(page, desk):
     branch = page.evaluate("() => data.branches[0].ref")
     desk.post(

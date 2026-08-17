@@ -728,7 +728,20 @@
 
   const branch = () => data.branches[state.branch];
   const stamp = () => new Date().toISOString();
-  const key = (path) => `${branch().ref} ${path}`;
+  // A review is the pull request it belongs to, whatever ref it is read from: the branch, the head fetched by number,
+  // or the number typed in. Keyed to the ref instead, comments and ticks vanish the moment the same work is opened
+  // another way.
+  const review = () => (branch().pr ? `#${branch().pr.number}` : branch().ref);
+
+  const aliases = () => {
+    const names = [branch().ref, review()];
+    if (branch().pr) names.push(`refs/diffdesk/pull/${branch().pr.number}`, `#${branch().pr.number}`);
+    return names;
+  };
+
+  const belongs = (note) => note.review === review() || aliases().includes(note.branch);
+
+  const key = (path) => `${review()} ${path}`;
 
   /* ---------- reviewed state, remembered and invalidated by digest ---------- */
 
@@ -753,7 +766,9 @@
   }
 
   function seenState(file) {
-    const mark = seen[key(file.path)];
+    const mark = aliases()
+      .map((name) => seen[`${name} ${file.path}`])
+      .find(Boolean);
     if (!mark) return "open";
     return mark === file.digest ? "done" : "stale";
   }
@@ -831,7 +846,12 @@
 
   // Which review a request is about. One log holds every review this desk has served, so naming the pull request and
   // the branch is what keeps a sweep for one review off another review's comments.
-  const where = () => ({ repo: data.upstream, pr: branch().pr ? branch().pr.number : null, branch: branch().ref });
+  const where = () => ({
+    repo: data.upstream,
+    pr: branch().pr ? branch().pr.number : null,
+    branch: branch().ref,
+    review: review(),
+  });
 
   // What the pull request holds about a comment, kept apart from what this desk holds: closing one here does not close
   // it there until GitHub says so.
@@ -865,7 +885,7 @@
     note.side !== "file" && !keys.has(`${note.path}|${note.side}|${note.endLine || note.line}`);
 
   function mine() {
-    return notes.sent.filter((note) => note.branch === branch().ref && note.path !== "(review)");
+    return notes.sent.filter((note) => belongs(note) && note.path !== "(review)");
   }
 
   function drawLog() {
@@ -1050,7 +1070,9 @@
     if (!drafts.length) return;
     const bound = els.togh.checked && Boolean(branch().pr);
     const batch = [...drafts];
-    if (summary) batch.push({ branch: branch().ref, path: "(review)", line: 0, side: "new", text: summary, at: stamp() });
+    if (summary) {
+      batch.push({ branch: branch().ref, review: review(), path: "(review)", line: 0, side: "new", text: summary, at: stamp() });
+    }
     let recorded = null;
     if (notes.live) recorded = await post("comments", { comments: batch, github: bound });
     if (bound && recorded && recorded.ok) {
@@ -1080,7 +1102,7 @@
   const send1 = (note) => sendAll([note], "");
 
   function notesAt(path, line, side) {
-    const hit = (note) => note.branch === branch().ref && note.path === path && note.side === side && (note.endLine || note.line) === line;
+    const hit = (note) => belongs(note) && note.path === path && note.side === side && (note.endLine || note.line) === line;
     return [...notes.sent.filter(hit), ...notes.drafts.filter(hit).map((draft) => ({ ...draft, pending: true }))];
   }
 
@@ -1475,7 +1497,15 @@
 
     // A file comment carries no line, which is what tells it apart everywhere else: in the log, on the page, and in
     // what is posted to the pull request.
-    const written = () => ({ branch: branch().ref, path: file.path, line: 0, side: "file", text: field.value.trim(), at: stamp() });
+    const written = () => ({
+      branch: branch().ref,
+      review: review(),
+      path: file.path,
+      line: 0,
+      side: "file",
+      text: field.value.trim(),
+      at: stamp(),
+    });
     drop.addEventListener("click", () => box.remove());
     keep.addEventListener("click", () => {
       if (!field.value.trim()) return;
@@ -1532,7 +1562,16 @@
     afterRow.after(row);
     field.focus();
 
-    const written = () => ({ branch: branch().ref, path, line, endLine, side, text: field.value.trim(), at: stamp() });
+    const written = () => ({
+      branch: branch().ref,
+      review: review(),
+      path,
+      line,
+      endLine,
+      side,
+      text: field.value.trim(),
+      at: stamp(),
+    });
 
     const commit = () => {
       if (!field.value.trim()) return;
@@ -1838,7 +1877,14 @@
   // What each file's body can actually show, and how far it has been scrolled: together they keep every comment on
   // screen whatever the width of the diff it hangs under.
   const roomFor = new ResizeObserver((entries) => {
-    for (const entry of entries) entry.target.style.setProperty("--seen", `${Math.round(entry.contentRect.width)}px`);
+    // Written on the next frame, and only when it changes: what it sets moves the comments hanging inside, which the
+    // observer would otherwise see again within the same delivery.
+    const rooms = entries.map((entry) => [entry.target, `${Math.round(entry.contentRect.width)}px`]);
+    requestAnimationFrame(() => {
+      for (const [node, room] of rooms) {
+        if (node.style.getPropertyValue("--seen") !== room) node.style.setProperty("--seen", room);
+      }
+    });
   });
 
   function follow(body) {
