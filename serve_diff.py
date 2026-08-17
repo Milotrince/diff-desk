@@ -535,6 +535,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         review = {"event": "COMMENT", "body": order.get("summary") or "Review from the diff desk.", "comments": []}
         for note in sending:
+            if note.get("side") == "file":
+                # A remark about a whole file is a review comment naming the file and no line within it.
+                review["comments"].append({"path": note["path"], "body": note["text"], "subject_type": "file"})
+                continue
             side = "LEFT" if note.get("side") == "old" else "RIGHT"
             comment = {
                 "path": note["path"],

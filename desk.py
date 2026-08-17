@@ -43,6 +43,8 @@ def ask(route, payload=None):
 
 
 def span(note):
+    if note.get("side") == "file":
+        return "the file"
     end = note.get("endLine")
     return f"{note['line']}-{end}" if end and end != note["line"] else str(note["line"])
 
