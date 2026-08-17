@@ -488,6 +488,60 @@ def test_a_comment_resolved_here_does_not_claim_the_pull_request_agrees(page, de
     page.locator("#logclose").click()
 
 
+def test_marking_a_file_reviewed_from_inside_it_brings_reading_back_to_the_next_one(page):
+    # Short enough that one file fills more than the view, which is when folding it can carry the reader forwards.
+    page.set_viewport_size({"width": 1200, "height": 420})
+    card = sample(page)
+    path = card.get_attribute("data-path")
+    page.evaluate(
+        """(path) => {
+          const node = document.querySelector(`section.file[data-path="${CSS.escape(path)}"]`);
+          window.scrollTo(0, node.offsetTop + node.offsetHeight * 0.6);
+        }""",
+        path,
+    )
+    page.wait_for_timeout(150)
+    started = page.evaluate("() => Math.round(window.scrollY)")
+    card.locator("input[type=checkbox]").check()
+    page.wait_for_timeout(400)
+    placed = page.evaluate(
+        """(path) => {
+          const node = document.querySelector(`section.file[data-path="${CSS.escape(path)}"]`);
+          const after = node.nextElementSibling;
+          return {
+            header: Math.round(document.querySelector('header').getBoundingClientRect().bottom),
+            head: Math.round(node.getBoundingClientRect().top),
+            next: after ? Math.round(after.getBoundingClientRect().top) : null,
+            folded: node.dataset.open,
+            scroll: Math.round(window.scrollY),
+          };
+        }""",
+        path,
+    )
+    assert placed["folded"] == "false"
+    # Reading resumes at the file just folded away, with the next one under it: nothing between is scrolled past.
+    assert placed["header"] <= placed["head"] <= placed["header"] + 40
+    if placed["next"] is not None:
+        assert placed["next"] > placed["head"]
+    assert placed["scroll"] < started
+    card.locator("input[type=checkbox]").uncheck()
+    page.evaluate("() => localStorage.clear()")
+    page.set_viewport_size({"width": 1500, "height": 900})
+
+
+def test_marking_a_file_reviewed_from_above_it_leaves_the_view_alone(page):
+    page.evaluate("() => window.scrollTo(0, 0)")
+    page.wait_for_timeout(120)
+    before = page.evaluate("() => Math.round(window.scrollY)")
+    card = page.locator("section.file").first
+    card.locator("input[type=checkbox]").check()
+    page.wait_for_timeout(300)
+    # The reader had not reached inside it, so folding it must not move them anywhere.
+    assert page.evaluate("() => Math.round(window.scrollY)") == before
+    card.locator("input[type=checkbox]").uncheck()
+    page.evaluate("() => localStorage.clear()")
+
+
 def test_the_log_says_where_every_comment_stands(page, desk):
     branch = page.evaluate("() => data.branches[0].ref")
     desk.post(

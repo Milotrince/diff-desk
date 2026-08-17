@@ -1761,12 +1761,32 @@
     body.style.setProperty("--slid", `${Math.round(body.scrollLeft)}px`);
   }
 
+  function holdPlace(path, change) {
+    // Reading a diff is linear, so a change that shortens what is above the reader must not carry them forwards over
+    // diffs they have not seen. Where the anchor still begins below the reader, its place is simply held; where the
+    // reader had already passed its start - folding away the file they were inside - they are brought back to where
+    // reading now continues, which is that file's head and the next file under it.
+    const at = (file) => {
+      const node = file && document.querySelector(`section.file[data-path="${CSS.escape(file)}"]`);
+      return node ? node.getBoundingClientRect().top : null;
+    };
+    const covered = document.querySelector("header").getBoundingClientRect().bottom;
+    const before = at(path);
+    const passed = before !== null && before < covered;
+    change();
+    const after = at(path);
+    if (after === null || before === null) return;
+    if (passed) document.querySelector(`section.file[data-path="${CSS.escape(path)}"]`).scrollIntoView({ block: "start" });
+    else window.scrollBy(0, after - before);
+  }
+
   function card(file, index) {
     const status = seenState(file);
     const wrap = document.createElement("section");
     wrap.className = "file";
     wrap.dataset.open = String(status !== "done");
     wrap.dataset.done = String(status === "done");
+    wrap.dataset.path = file.path;
     wrap.id = `f${index}`;
 
     const head = document.createElement("div");
@@ -1802,10 +1822,16 @@
     box.type = "checkbox";
     box.checked = status === "done";
     box.addEventListener("change", () => {
-      setSeen(file, box.checked);
-      wrap.dataset.done = String(box.checked);
-      wrap.dataset.open = String(!box.checked);
-      render();
+      // The card itself stays put unless it is about to be hidden, in which case the one after it takes its place.
+      const shown = visible(view().files);
+      const following = shown[shown.indexOf(file) + 1];
+      const anchor = box.checked && document.body.classList.contains("hide-done") ? following : file;
+      holdPlace(anchor && anchor.path, () => {
+        setSeen(file, box.checked);
+        wrap.dataset.done = String(box.checked);
+        wrap.dataset.open = String(!box.checked);
+        render();
+      });
     });
     seenLabel.append(box, document.createTextNode("Reviewed"));
 
@@ -2055,8 +2081,12 @@
   });
   els.hidedone.addEventListener("click", () => {
     const on = els.hidedone.getAttribute("aria-pressed") !== "true";
-    els.hidedone.setAttribute("aria-pressed", String(on));
-    document.body.classList.toggle("hide-done", on);
+    // Anchored on the first file still shown, so hiding what is done does not scroll the rest out from under the reader.
+    const staying = visible(view().files).find((file) => seenState(file) !== "done");
+    holdPlace(staying && staying.path, () => {
+      els.hidedone.setAttribute("aria-pressed", String(on));
+      document.body.classList.toggle("hide-done", on);
+    });
   });
   els.source.addEventListener("toggle", () => {
     if (els.source.open) loadRefs();
