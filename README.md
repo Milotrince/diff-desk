@@ -58,6 +58,8 @@ On the page:
   What the pull request says decides, every time: a comment this desk believed resolved there is resolved for real if
   its thread is still open, and one whose thread cannot be found is owed a resolution again rather than left claiming
   one. A resolution is believed only when GitHub reports the thread as resolved.
+- **Copying a selection gives the code alone** - no line numbers, no `+`/`-` markers, indentation intact - so a snippet
+  lifted out of a diff pastes straight into an editor. A selection inside a single line copies as the browser made it.
 - **Code stays code.** A fenced block keeps its indentation as a code block, backticks stay inline code, and line
   breaks stay where you put them. Pasted text is only ever text, never markup the page acts on.
 - **Edit** rewrites a comment and keeps what it said before. One already posted to a pull request is marked as having

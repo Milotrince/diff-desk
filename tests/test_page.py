@@ -548,6 +548,34 @@ def test_marking_a_file_reviewed_from_above_it_leaves_the_view_alone(page):
     page.evaluate("() => localStorage.clear()")
 
 
+def test_copying_a_selection_of_lines_yields_the_code_alone(page):
+    page.evaluate("""() => {
+      window.__copied = null;
+      document.addEventListener('copy', (event) => {
+        window.__copied = event.clipboardData.getData('text/plain');
+      });
+    }""")
+    wanted = page.evaluate("""() => {
+      const card = [...document.querySelectorAll('section.file')].find((node) => node.textContent.includes('deep.py'));
+      const rows = [...card.querySelectorAll('.body tr[data-line]')];
+      const range = document.createRange();
+      range.setStart(rows[0].querySelector('td.code'), 0);
+      range.setEnd(rows[rows.length - 1].querySelector('td.code'), 1);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.execCommand('copy');
+      return rows.map((row) => row.querySelector('td.code').textContent);
+    }""")
+    copied = page.evaluate("() => window.__copied")
+    # The code of the selected lines, and nothing the diff put beside it: no line numbers, no markers.
+    assert copied == "\n".join(wanted)
+    assert not any(line.strip().startswith(("+", "-")) and line.strip() in "+-" for line in copied.split("\n"))
+    # Indentation is what makes pasted code usable, so it survives.
+    assert any(line.startswith("    ") for line in copied.split("\n"))
+    page.evaluate("() => window.getSelection().removeAllRanges()")
+
+
 def test_a_file_can_be_commented_on_as_a_whole(page, desk):
     card = sample(page)
     path = card.locator(".path").first.inner_text()

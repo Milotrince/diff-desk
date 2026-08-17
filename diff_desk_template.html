@@ -1427,6 +1427,20 @@
 
   const EDGE = 70;
 
+  document.addEventListener("copy", (event) => {
+    // A diff row carries its two line numbers and its marker beside the code, and a selection spanning rows takes all
+    // of them, so what lands in an editor is unusable. A copy takes the code alone, one line per row, indentation kept.
+    // A selection inside a single line is left exactly as the browser made it.
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !event.clipboardData) return;
+    const holder = document.createElement("div");
+    holder.append(selection.getRangeAt(0).cloneContents());
+    const cells = [...holder.querySelectorAll("td.code")];
+    if (cells.length < 2) return;
+    event.clipboardData.setData("text/plain", cells.map((cell) => cell.textContent).join("\n"));
+    event.preventDefault();
+  });
+
   document.addEventListener("pointermove", (event) => {
     // A release outside the window is never delivered, so a move with no button held is the release itself. Without
     // this the desk stays mid-drag for good: every later hover keeps extending a range nobody is holding.
