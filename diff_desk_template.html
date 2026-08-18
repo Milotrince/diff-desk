@@ -713,6 +713,9 @@
   let folded = new Set();
   // Resolved threads are folded away by default; opening one is a per-view choice, not a state worth remembering.
   const unfolded = new Set();
+  // Which files the reader has opened or folded by hand, against what being reviewed would say. The page redraws itself
+  // while it is read, so without this a file opened to look at a comment folds itself away again moments later.
+  const folds = new Map();
 
   const els = {};
   for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "logresolved", "brand", "repo", "source", "sourceopen", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
@@ -950,6 +953,7 @@
     // A file folded away, or hidden because it is reviewed, still holds the comment: it is opened and shown for this.
     card.dataset.open = "true";
     card.dataset.reveal = "true";
+    folds.set(note.path, true);
     els.log.dataset.open = "false";
     const thread = document.getElementById(`note-${note.seq}`) || card;
     for (const found of document.querySelectorAll(".thread.found")) found.classList.remove("found");
@@ -2001,8 +2005,6 @@
     // observer would otherwise see again within the same delivery.
     // A folded file reports no room at all, which is not a width its comments should take: sized to nothing they fill
     // the table instead, collapsing the code column and stretching the page. What it last had room for stands.
-    // A folded file reports no room at all, which is not a width its comments should take: sized to nothing they fill
-    // the table instead, collapsing the code column and stretching the page. What it last had room for stands.
     const rooms = entries
       .filter((entry) => entry.contentRect.width)
       .map((entry) => [entry.target, `${Math.round(entry.contentRect.width)}px`]);
@@ -2040,7 +2042,7 @@
     const status = seenState(file);
     const wrap = document.createElement("section");
     wrap.className = "file";
-    wrap.dataset.open = String(status !== "done");
+    wrap.dataset.open = String(folds.has(file.path) ? folds.get(file.path) : status !== "done");
     wrap.dataset.done = String(status === "done");
     wrap.dataset.path = file.path;
     wrap.id = `f${index}`;
@@ -2066,6 +2068,7 @@
     }
     grow.addEventListener("click", () => {
       wrap.dataset.open = wrap.dataset.open === "true" ? "false" : "true";
+      folds.set(file.path, wrap.dataset.open === "true");
       fitNotes();
     });
 
@@ -2087,6 +2090,7 @@
         setSeen(file, box.checked);
         wrap.dataset.done = String(box.checked);
         wrap.dataset.open = String(!box.checked);
+        folds.set(file.path, !box.checked);
         render();
       });
     });

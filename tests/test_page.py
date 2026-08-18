@@ -542,6 +542,27 @@ def test_marking_a_file_reviewed_from_inside_it_brings_reading_back_to_the_next_
     page.set_viewport_size({"width": 1500, "height": 900})
 
 
+def test_a_file_opened_by_hand_stays_open_when_the_page_redraws(page):
+    card = page.locator("section.file").first
+    card.locator("input[type=checkbox]").check()
+    page.wait_for_selector("section.file[data-done='true'][data-open='false']")
+
+    # Opened to look at what is inside it, a reviewed file must stay open: the page redraws itself while it is read.
+    card.locator(".filehead").first.click()
+    assert card.get_attribute("data-open") == "true"
+    page.evaluate("() => render()")
+    assert card.get_attribute("data-open") == "true"
+
+    # Folding one that is not reviewed lasts just as long.
+    card.locator("input[type=checkbox]").uncheck()
+    card.locator(".filehead").first.click()
+    assert card.get_attribute("data-open") == "false"
+    page.evaluate("() => render()")
+    assert card.get_attribute("data-open") == "false"
+    card.locator(".filehead").first.click()
+    page.evaluate("() => localStorage.clear()")
+
+
 def test_marking_a_file_reviewed_from_above_it_leaves_the_view_alone(page):
     page.evaluate("() => window.scrollTo(0, 0)")
     page.wait_for_timeout(120)
