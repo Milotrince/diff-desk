@@ -641,6 +641,7 @@
     </div>
   </div>
   <button class="toggle" id="logopen" title="Every comment recorded, and where each one stands">Comments</button>
+  <button class="solid" id="moved" hidden title="The branch has moved on since this page was built">Refresh</button>
 </header>
 
 <div class="source" id="source" data-open="false">
@@ -711,6 +712,9 @@
   const sel = { path: null, from: null, to: null };
   let seen = {};
   let folded = new Set();
+  // A reply half written, per comment. The page redraws itself while it is read, which builds the thread anew: without
+  // this, words typed into a reply go with the box they were typed into.
+  const writing = new Map();
   // Resolved threads are folded away by default; opening one is a per-view choice, not a state worth remembering.
   const unfolded = new Set();
   // Which files the reader has opened or folded by hand, against what being reviewed would say. The page redraws itself
@@ -718,7 +722,7 @@
   const folds = new Map();
 
   const els = {};
-  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "logresolved", "brand", "repo", "source", "sourceopen", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus"]) {
+  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "logresolved", "brand", "repo", "source", "sourceopen", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus", "moved"]) {
     els[id] = document.getElementById(id);
   }
 
@@ -802,6 +806,19 @@
     } catch (error) {
       notes.live = false;
       return { ok: false, error: error.message };
+    }
+  }
+
+  async function watchBranch() {
+    // Offered rather than taken: rebuilding the diff under the reader moves the ground they are on, so when the branch
+    // has moved on - a commit, a fixup, work saved on disk - the page says so and waits to be asked.
+    try {
+      const answer = await fetch("state", { cache: "no-store" });
+      if (!answer.ok) return;
+      const { stamp } = await answer.json();
+      if (stamp && data.stamp) els.moved.hidden = stamp === data.stamp;
+    } catch (error) {
+      // Nothing is serving, which the comments already say.
     }
   }
 
@@ -1065,7 +1082,31 @@
     render();
   }
 
+  function keepDrafts() {
+    // Written wherever the tray changes: a comment waiting to be sent is work that has been done, and a reload, a
+    // refresh, or a browser closed on it must not be what throws it away.
+    try {
+      localStorage.setItem("diffdesk.drafts", JSON.stringify({ review: review(), note: els.traynote.value, held: notes.drafts }));
+    } catch (error) {
+      // A storage that refuses to be written is one the reader will notice on their own.
+    }
+  }
+
+  function takeDrafts() {
+    try {
+      const kept = JSON.parse(localStorage.getItem("diffdesk.drafts") || "null");
+      // Only this review's: the drafts of another branch belong to it, not to whatever is being read now.
+      if (kept && kept.review === review()) {
+        notes.drafts = kept.held || [];
+        els.traynote.value = kept.note || "";
+      }
+    } catch (error) {
+      notes.drafts = [];
+    }
+  }
+
   function drawTray() {
+    keepDrafts();
     const request = branch().pr;
     els.tograb.hidden = !(request && notes.live);
     els.ghlabel.textContent = request ? `Also post to PR #${request.number}` : "";
@@ -1395,13 +1436,15 @@
       const say = document.createElement("textarea");
       say.rows = 1;
       say.placeholder = note.state === "resolved" ? "Reopen with a reply" : "Reply";
+      say.value = writing.get(note.seq) || "";
+      say.addEventListener("input", () => writing.set(note.seq, say.value));
       const send = document.createElement("button");
       send.className = "ghost";
       send.textContent = "Reply";
       send.addEventListener("click", async () => {
         if (!say.value.trim()) return;
         await post("reply", { seq: note.seq, text: say.value.trim(), who: "you" });
-        say.value = "";
+        writing.delete(note.seq);
         await loadNotes();
         render();
       });
@@ -1415,7 +1458,7 @@
           resolved: note.state !== "resolved",
           who: "you",
         });
-        say.value = "";
+        writing.delete(note.seq);
         await loadNotes();
         render();
         // Closing it here owes a resolution on the pull request, taken as soon as it is asked for.
@@ -1891,15 +1934,17 @@
       }
   }
 
-  async function rescan() {
-    const refs = [...source.picked];
+  async function rescan(keep) {
+    const refs = keep ? data.branches.map((entry) => entry.ref) : [...source.picked];
+    const reading = keep ? { ...state } : { branch: 0, scope: "all", current: 0 };
+    const where = keep ? { dir: data.root, base: data.baseRef } : { dir: els.srcdir.value, base: els.srcbase.value };
     els.srcstatus.textContent = "collecting diffs...";
     try {
       const outcome = await (
         await fetch("scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dir: els.srcdir.value, base: els.srcbase.value, refs }),
+          body: JSON.stringify({ ...where, refs }),
         })
       ).json();
       if (!outcome.ok) {
@@ -1907,7 +1952,10 @@
         return;
       }
       data = outcome.data;
-      Object.assign(state, { branch: 0, scope: "all", current: 0 });
+      Object.assign(state, reading);
+      // A branch that has gone from the payload cannot be the one being read.
+      if (!data.branches[state.branch]) state.branch = 0;
+      els.moved.hidden = true;
       clearSel();
       showSource();
       renderTabs();
@@ -2373,7 +2421,8 @@
   els.srcbase.addEventListener("change", loadRefs);
   els.srcdir.addEventListener("change", loadRefs);
   els.srcfilter.addEventListener("input", drawRefs);
-  els.srcscan.addEventListener("click", rescan);
+  els.srcscan.addEventListener("click", () => rescan(false));
+  els.moved.addEventListener("click", () => rescan(true));
   els.traysend.addEventListener("click", submitReview);
   els.logopen.addEventListener("click", () => {
     els.log.dataset.open = els.log.dataset.open === "true" ? "false" : "true";
@@ -2442,7 +2491,10 @@
     // Never redraw under a gesture: rebuilding the table destroys the pin holding the pointer, and the release that
     // would have opened the comment box is delivered to a node that is no longer in the page.
     if (drag.on) return;
+    await watchBranch();
     if (!notes.live || document.querySelector("tr[data-composer]") || notes.drafts.length) return;
+    // A box being typed into is rebuilt by a redraw, which takes the focus with it even when the words are kept.
+    if (document.activeElement && document.activeElement.matches("textarea, input:not([type=checkbox])")) return;
     await loadNotes();
     drawLog();
     render();
@@ -2463,6 +2515,7 @@
 
   loadSeen();
   loadFolded();
+  takeDrafts();
   showSource();
   renderTabs();
   renderScopes();
