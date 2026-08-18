@@ -393,6 +393,33 @@ def test_a_comment_stays_inside_the_view_when_the_diff_is_scrolled(page, desk):
     page.set_viewport_size({"width": 1500, "height": 900})
 
 
+def test_a_comment_never_sticks_out_past_the_diff_it_hangs_under(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    desk.post("/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": "a remark"}])
+    page.reload(wait_until="load")
+    page.wait_for_selector(".body .thread")
+    # A window is a whole number of pixels wide; the diff inside one need not be, and half a pixel of overflow is
+    # enough to put a scrollbar across a file that fits. So the cards are walked over a fraction of a pixel.
+    for step in range(10):
+        page.evaluate(
+            "(wide) => document.querySelectorAll('section.file').forEach((card) => { card.style.width = `${wide}px`; })",
+            900 + step / 10,
+        )
+        page.wait_for_timeout(60)
+        look = page.evaluate("""() => {
+          const bodies = [...document.querySelectorAll('.body')].filter((body) => body.clientWidth);
+          const notes = [...document.querySelectorAll('.noterow td > *, .body .thread')];
+          return {
+            over: notes.filter((box) => box.getBoundingClientRect().right
+              > box.closest('.body').getBoundingClientRect().right + 0.01).length,
+            bars: bodies.filter((body) => body.offsetHeight > body.clientHeight
+              && body.scrollWidth <= body.clientWidth).length,
+          };
+        }""")
+        assert look == {"over": 0, "bars": 0}, step
+    page.evaluate("() => document.querySelectorAll('section.file').forEach((card) => { card.style.width = ''; })")
+
+
 def test_a_pending_comment_can_be_sent_on_its_own_from_the_tray(page, desk):
     lines = sample(page).locator("tr.a[data-line]")
     for index, text in ((0, "the first remark"), (1, "the second remark")):
