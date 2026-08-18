@@ -3096,9 +3096,11 @@
     // observer would otherwise see again within the same delivery.
     // A folded file reports no room at all, which is not a width its comments should take: sized to nothing they fill
     // the table instead, collapsing the code column and stretching the page. What it last had room for stands.
+    // Taken whole rather than rounded, because a window is a whole number of pixels wide and the diff inside one need
+    // not be: a body 1020.6px wide reads a comment of 1021px as overflow, and puts a scrollbar under a file that fits.
     const rooms = entries
       .filter((entry) => entry.contentRect.width)
-      .map((entry) => [entry.target, `${Math.round(entry.contentRect.width)}px`]);
+      .map((entry) => [entry.target, `${entry.contentRect.width}px`]);
     requestAnimationFrame(() => {
       for (const [node, room] of rooms) {
         if (node.style.getPropertyValue("--seen") !== room) node.style.setProperty("--seen", room);
