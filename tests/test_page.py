@@ -1764,3 +1764,109 @@ def test_a_reply_below_the_fold_is_not_taken_for_read(page, desk):
     page.wait_for_timeout(150)
     assert page.locator(f"#note-{made} .thread.folded").count() == 1
     page.evaluate("() => localStorage.clear()")
+
+
+def test_an_unchanged_answer_leaves_the_page_alone(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    # The page asks on a timer, and the usual answer is the one already on screen. Rebuilding it for that would tear
+    # down every card the reader is looking at.
+    assert page.evaluate("async () => await loadNotes()") is False
+    desk.post("/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new",
+                             "text": "left by someone else"}])
+    assert page.evaluate("async () => await loadNotes()") is True
+    assert page.evaluate("async () => await loadNotes()") is False
+
+
+def test_a_comment_being_written_survives_a_redraw(page):
+    line = sample(page).locator("tr.a[data-line]").last
+    where = line.get_attribute("data-line")
+    line.locator("td.code").first.hover()
+    line.locator("button.pin").first.click()
+    field = page.locator("tr[data-composer='true'] textarea")
+    field.fill("half a thought")
+    field.evaluate("node => node.setSelectionRange(4, 4)")
+    page.evaluate("() => render()")
+    # Marking a file reviewed, filtering, answering a thread: every one of them rebuilds the card the box hangs in.
+    assert page.locator("tr[data-composer='true'] textarea").count() == 1
+    kept = page.evaluate("""() => {
+      const box = document.querySelector("tr[data-composer='true'] textarea");
+      return {
+        text: box.value,
+        caret: box.selectionStart,
+        focused: document.activeElement === box,
+        line: box.closest('tr').previousElementSibling.dataset.line,
+      };
+    }""")
+    assert kept == {"text": "half a thought", "caret": 4, "focused": True, "line": where}
+    page.locator("tr[data-composer='true'] button.ghost").click()
+
+
+def test_a_file_comment_being_written_survives_a_redraw(page):
+    card = sample(page)
+    path = card.get_attribute("data-path")
+    card.locator("button.tiny").filter(has_text="Comment on the file").click()
+    page.locator(".filenote.writing textarea").fill("this file wants splitting in two")
+    page.evaluate("() => render()")
+    box = page.locator(".filenote.writing")
+    assert box.count() == 1
+    assert box.locator("textarea").input_value() == "this file wants splitting in two"
+    assert box.evaluate("node => node.closest('section.file').dataset.path") == path
+    box.locator("button.ghost").click()
+
+
+def test_a_diff_scrolled_sideways_stays_where_it_was_after_a_redraw(page):
+    # The sample diff's lines are short, so the table is widened to give it something to scroll across.
+    page.add_style_tag(content="#main table { min-width: 2400px; }")
+    card = sample(page)
+    body = card.locator(".body").first
+    body.evaluate("node => { node.scrollLeft = 120; }")
+    page.wait_for_timeout(80)
+    page.evaluate("() => render()")
+    page.wait_for_timeout(80)
+    held = page.evaluate(
+        """(path) => {
+          const body = document.querySelector(`section.file[data-path="${CSS.escape(path)}"] .body`);
+          return {across: body.scrollLeft, slid: body.style.getPropertyValue('--slid')};
+        }""",
+        card.get_attribute("data-path"),
+    )
+    assert held == {"across": 120, "slid": "120px"}
+
+
+def test_a_comment_being_written_survives_a_reload(page):
+    line = sample(page).locator("tr.a[data-line]").last
+    where = line.get_attribute("data-line")
+    line.locator("td.code").first.hover()
+    line.locator("button.pin").first.click()
+    page.locator("tr[data-composer='true'] textarea").fill("half a thought, and the tab went away")
+    page.reload(wait_until="load")
+    page.wait_for_selector("tr[data-composer='true']")
+    kept = page.evaluate("""() => {
+      const box = document.querySelector("tr[data-composer='true'] textarea");
+      return {text: box.value, line: box.closest('tr').previousElementSibling.dataset.line};
+    }""")
+    assert kept == {"text": "half a thought, and the tab went away", "line": where}
+    # Cancelling is done with it, so the next load must not bring it back.
+    page.locator("tr[data-composer='true'] button.ghost").click()
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    assert page.locator("tr[data-composer='true']").count() == 0
+
+
+def test_a_reply_being_written_survives_a_reload(page, desk):
+    line = sample(page).locator("tr.a[data-line]").first
+    line.locator("td.code").first.hover()
+    line.locator("button.pin").first.click()
+    submit_alone(page, "the remark as first written")
+    page.wait_for_selector(".thread .actions textarea")
+    page.locator(".thread .actions textarea").first.fill("a reply not yet sent")
+    page.reload(wait_until="load")
+    page.wait_for_selector(".thread .actions textarea")
+    assert page.locator(".thread .actions textarea").first.input_value() == "a reply not yet sent"
+    page.locator(".thread .actions button.ghost").filter(has_text="Reply").first.click()
+    # Emptied by the page once the reply has landed, which is later than the server having it.
+    page.wait_for_function("() => document.querySelector('.thread .actions textarea').value === ''")
+    page.reload(wait_until="load")
+    page.wait_for_selector(".thread .actions textarea")
+    # Sent, so the box it was written in is empty again.
+    assert page.locator(".thread .actions textarea").first.input_value() == ""

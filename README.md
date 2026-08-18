@@ -100,8 +100,8 @@ the end of the file it belonged to. Neither is ever resolved or deleted on your 
   **Refresh** once what it was built from has moved on - a commit, a fixup, work saved on disk. It is offered, never
   taken: rebuilding the diff under you would move the ground you are on, and taking it keeps the branch and commit you
   were reading, along with every comment and tick. Comments written and not yet sent are kept through both, so a
-  refresh, a reload, or a browser closed on them costs nothing, and a reply half written into a thread survives the
-  page redrawing itself under it. Every box grows with what is written into it, up to the point where a long remark
+  refresh, a reload, or a browser closed on them costs nothing. A comment or a reply still half written is kept the
+  same way: it comes back in the box it was being typed into, on the line or the file or the thread it hung on. Every box grows with what is written into it, up to the point where a long remark
   would push the diff off screen and scrolls inside instead. A comment keeps the little markdown that carries meaning:
   fenced blocks and backticks stay code, and a run of `>` lines reads as the passage it quotes.
 - **The file list is a tree** following the repository's folders, each foldable and remembered across reloads, with a
