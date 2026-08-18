@@ -956,19 +956,22 @@
 <script>
   let data = JSON.parse(document.getElementById("data").textContent);
   const state = { branch: 0, scope: "all", query: "", current: 0 };
-  const notes = { sent: [], drafts: [], live: false };
+  const notes = { sent: [], drafts: [], live: false, raw: null };
   // A selection is a span of rendered rows, held as the row order within the file rather than as line numbers on one
   // side, which is what lets one range cover removed and added lines together.
   const sel = { path: null, from: null, to: null };
   let seen = {};
   let folded = new Set();
   // A reply half written, per comment. The page redraws itself while it is read, which builds the thread anew: without
-  // this, words typed into a reply go with the box they were typed into.
+  // this, words typed into a reply go with the box they were typed into. Kept, so neither does a reload.
   const writing = new Map();
   // Which comments the reader folded away themselves, by resolving one here or by folding it by hand. A resolution
   // reaching the page from the session leaves a thread as it stands, so nothing being read closes under the reader.
   // Kept, or a reload would show every thread settled long ago in full again.
   let tucked = new Set();
+  // A comment part-written, read back from the store on load: a composer is not in the page until it is opened, so
+  // keeping its text is not enough to bring it back. The first redraw opens it again and this is spent.
+  let composing = null;
   // Which files the reader has opened or folded by hand, against what being reviewed would say, each remembered with
   // the diff it was decided on: the page redraws itself while it is read, so without this a file opened to look at a
   // comment folds itself away again moments later - but a file that has changed since is news, and opens.
@@ -1213,20 +1216,26 @@
     }
   }
 
+  // Answers whether anything moved, so a caller asking on a timer can leave the page it already drew alone.
   async function loadNotes() {
+    const before = [notes.raw, notes.live];
     try {
       const response = await fetch("comments", { cache: "no-store" });
       if (!response.ok) throw new Error("no endpoint");
-      notes.sent = await response.json();
+      notes.raw = await response.text();
+      notes.sent = JSON.parse(notes.raw);
       notes.live = true;
     } catch (error) {
       notes.live = false;
       try {
-        notes.sent = JSON.parse(localStorage.getItem("diffdesk.notes") || "[]");
+        notes.raw = localStorage.getItem("diffdesk.notes") || "[]";
+        notes.sent = JSON.parse(notes.raw);
       } catch (parseError) {
+        notes.raw = "[]";
         notes.sent = [];
       }
     }
+    return notes.raw !== before[0] || notes.live !== before[1];
   }
 
   function showStatus(staleCount) {
@@ -1663,9 +1672,16 @@
 
   function keepDrafts() {
     // Written wherever the tray changes: a comment waiting to be sent is work that has been done, and a reload, a
-    // refresh, or a browser closed on it must not be what throws it away.
+    // refresh, or a browser closed on it must not be what throws it away. A comment or a reply still being typed is
+    // the same work a moment earlier, so it is kept beside them.
     try {
-      localStorage.setItem("diffdesk.drafts", JSON.stringify({ review: review(), note: els.traynote.value, held: notes.drafts }));
+      localStorage.setItem("diffdesk.drafts", JSON.stringify({
+        review: review(),
+        note: els.traynote.value,
+        held: notes.drafts,
+        replies: [...writing].filter(([, said]) => said.trim()),
+        composing: heldNote(),
+      }));
     } catch (error) {
       // A storage that refuses to be written is one the reader will notice on their own.
     }
@@ -1710,6 +1726,8 @@
       if (kept && kept.review === review()) {
         notes.drafts = kept.held || [];
         els.traynote.value = kept.note || "";
+        for (const [seq, said] of kept.replies || []) writing.set(Number(seq), said);
+        composing = kept.composing || null;
       }
     } catch (error) {
       notes.drafts = [];
@@ -2269,7 +2287,10 @@
       say.rows = 1;
       say.placeholder = note.state === "resolved" ? "Reopen with a reply" : "Reply";
       say.value = writing.get(note.seq) || "";
-      say.addEventListener("input", () => writing.set(note.seq, say.value));
+      say.addEventListener("input", () => {
+        writing.set(note.seq, say.value);
+        keepDrafts();
+      });
       grows(say);
       const send = document.createElement("button");
       send.className = "ghost";
@@ -2278,6 +2299,7 @@
         if (!say.value.trim()) return;
         await post("reply", { seq: note.seq, text: say.value.trim(), who: "you" });
         writing.delete(note.seq);
+        keepDrafts();
         await loadNotes();
         render();
       });
@@ -2288,6 +2310,7 @@
         const shutting = note.state !== "resolved";
         await post("resolve", { seq: [note.seq], answer: say.value.trim(), resolved: shutting, who: "you" });
         writing.delete(note.seq);
+        keepDrafts();
         await loadNotes();
         if (shutting) {
           // The reader's own hand on it, which is what folds a thread away, and closed by them is read by them: the
@@ -2481,9 +2504,11 @@
     if (card.querySelector(".filenote.writing")) return;
     const box = document.createElement("div");
     box.className = "filenote writing";
+    box.dataset.about = JSON.stringify({ path: file.path });
     const field = document.createElement("textarea");
     field.placeholder = `Comment on ${file.path}, as a whole`;
     grows(field);
+    field.addEventListener("input", keepDrafts);
     const controls = document.createElement("div");
     controls.className = "row";
     const now = document.createElement("button");
@@ -2511,7 +2536,11 @@
       text: field.value.trim(),
       at: stamp(),
     });
-    drop.addEventListener("click", () => box.remove());
+    const shut = () => {
+      box.remove();
+      keepDrafts();
+    };
+    drop.addEventListener("click", shut);
     keep.addEventListener("click", () => {
       if (!field.value.trim()) return;
       notes.drafts.push(written());
@@ -2530,7 +2559,7 @@
         event.preventDefault();
         keep.click();
       }
-      if (event.key === "Escape") box.remove();
+      if (event.key === "Escape") shut();
     });
   }
 
@@ -2539,6 +2568,8 @@
     const row = document.createElement("tr");
     row.className = "noterow";
     row.dataset.composer = "true";
+    row.dataset.about = JSON.stringify({ path, line, endLine, side });
+    row.dataset.spot = `${afterRow.dataset.line} ${afterRow.dataset.side}`;
     const cell = document.createElement("td");
     cell.colSpan = 5;
     const box = document.createElement("div");
@@ -2546,6 +2577,7 @@
     const field = document.createElement("textarea");
     field.placeholder = `Comment on ${path.split("/").pop()}, ${endLine !== line ? `lines ${line}–${endLine}` : `line ${line}`}`;
     grows(field);
+    field.addEventListener("input", keepDrafts);
     const controls = document.createElement("div");
     controls.className = "row";
     const now = document.createElement("button");
@@ -2602,6 +2634,7 @@
     cancel.addEventListener("click", () => {
       row.remove();
       clearSel();
+      keepDrafts();
     });
     field.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -2611,6 +2644,7 @@
       if (event.key === "Escape") {
         row.remove();
         clearSel();
+        keepDrafts();
       }
     });
   }
@@ -2650,12 +2684,14 @@
   function redrawCard(file, index) {
     const old = document.getElementById(`f${index}`);
     if (!old) return;
+    const held = heldNote();
     const fresh = card(file, index);
     fresh.dataset.open = old.dataset.open;
     clearSel();
     old.replaceWith(fresh);
     settleBody(fresh);
     nearby.observe(fresh);
+    reopenNote(held);
   }
 
   const lastNumbered = (rows) => [...rows].reverse().find((row) => row[0] !== "h" && row[2] > 0);
@@ -2978,10 +3014,75 @@
     if (card) jump(Number(card.id.slice(1)));
   }
 
+  // A redraw builds every card again, so a comment half-written would go with the old page. Where the composer hangs
+  // is recorded on the composer itself, which is enough to open it again at the same place.
+  function heldNote() {
+    const field = document.querySelector("#main tr[data-composer] textarea, #main .filenote.writing textarea");
+    if (!field) return null;
+    const row = field.closest("tr[data-composer]");
+    return {
+      about: JSON.parse((row || field.closest(".filenote")).dataset.about),
+      spot: row ? row.dataset.spot : null,
+      text: field.value,
+      caret: [field.selectionStart, field.selectionEnd],
+      here: document.activeElement === field,
+    };
+  }
+
+  function reopenNote(held) {
+    if (!held) return;
+    const { path, line, endLine, side } = held.about;
+    const where = window.scrollY;
+    let field = null;
+    if (held.spot) {
+      const [at, on] = held.spot.split(" ");
+      const row = document.querySelector(`#main tr[data-path="${CSS.escape(path)}"][data-line="${at}"][data-side="${on}"]`);
+      if (!row) return;
+      openComposer(row, path, line, endLine, side);
+      field = row.nextElementSibling.querySelector("textarea");
+    } else {
+      const card = document.querySelector(`#main section.file[data-path="${CSS.escape(path)}"]`);
+      const file = view().files.find((entry) => entry.path === path);
+      if (!card || !file) return;
+      openFileComposer(card, file);
+      field = card.querySelector(".filenote.writing textarea");
+    }
+    if (!field) return;
+    field.value = held.text;
+    field.dispatchEvent(new Event("input"));
+    field.setSelectionRange(held.caret[0], held.caret[1]);
+    // Opening a composer puts the caret in it, and the browser scrolls to the caret. Nobody who was reading elsewhere
+    // asked to be carried back.
+    if (held.here) return;
+    field.blur();
+    window.scrollTo(0, where);
+  }
+
+  // A diff scrolled sideways is a reader part-way across a long line, which a rebuilt card would carry back to the
+  // left margin.
+  function heldSlide() {
+    return new Map([...document.querySelectorAll("#main section.file")]
+      .map((card) => [card.dataset.path, card.querySelector(".body").scrollLeft])
+      .filter(([, across]) => across));
+  }
+
+  function reopenSlide(slid) {
+    for (const [path, across] of slid) {
+      const body = document.querySelector(`#main section.file[data-path="${CSS.escape(path)}"] .body`);
+      if (!body) continue;
+      body.scrollLeft = across;
+      follow(body);
+    }
+  }
+
   const chevron = '<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>';
   const tickMark = '<svg class="tick" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 6.5 4.7 9 10 3.5"/></svg>';
 
   function render() {
+    // What was being written before this page was loaded stands in for what is in it, once.
+    const held = heldNote() || composing;
+    composing = null;
+    const slid = heldSlide();
     const { files, commit } = view();
     const staleCount = countStale(files);
     const shown = visible(files);
@@ -3028,6 +3129,8 @@
     fitNotes();
     markCurrent();
     paintSel();
+    reopenSlide(slid);
+    reopenNote(held);
   }
 
   // Written before the page is painted: the observer below only hears about a body a frame later, and a comment left
@@ -3789,9 +3892,12 @@
     if (!notes.live || document.querySelector("tr[data-composer], .filenote.writing") || notes.drafts.length) return;
     // A box being typed into is rebuilt by a redraw, which takes the focus with it even when the words are kept.
     if (document.activeElement && document.activeElement.matches("textarea, input:not([type=checkbox])")) return;
-    await loadNotes();
-    drawLog();
-    render();
+    // Almost every ask comes back with the page that is already up, and rebuilding it for that would throw away the
+    // reader's place, the sideways scroll of every diff, and a frame of settling with it.
+    if (await loadNotes()) {
+      drawLog();
+      render();
+    }
     // A post that could not be made is retried on its own, as long as the browser believes it is connected.
     if (navigator.onLine) {
       await retryOwed(false);

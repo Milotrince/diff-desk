@@ -48,7 +48,7 @@ The page comes up on `127.0.0.1:8787`, each ref a tab, scoped to the whole range
 - **A comment follows its line** when the diff moves under it, reading "moved from L<n>". One whose line has left the diff is kept, marked "code moved on", at the end of the file it belonged to. Neither is ever resolved or deleted on your behalf.
 - **Every comment wears the number it is referred to by**, so an answer saying "[58]" points at a thread. Press `#`, type the number, and the page goes to it, unfolding whatever was folded; a URL ending in `#58` lands the same way.
 - A comment keeps the markdown that carries meaning: fenced blocks and backticks stay code, `>` lines read as the passage they quote. Pasted text is only ever text.
-- Comments survive a reload, a refresh and a browser closed on them, a half-written reply included.
+- Comments survive a reload, a refresh and a browser closed on them. One still half written is kept the same way, and comes back in the box it was being typed into - the line, the file, or the thread it hung on.
 - **Comments** in the header opens the panel: every thread on the branch, open or resolved, waiting for GitHub or local only. Clicking one jumps to it.
 
 ## Sending to a pull request
