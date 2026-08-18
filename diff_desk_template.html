@@ -151,6 +151,8 @@
   .search svg { position: absolute; left: 8px; width: 13px; height: 13px; color: var(--faint); }
   /* Never let a label fold onto a second line: that is what turned the bar into two rows. */
   .toggle { position: relative; cursor: pointer; flex: none; white-space: nowrap; }
+  .toggle.icon { display: grid; place-items: center; width: 30px; padding: 0; }
+  .toggle.icon svg { width: 15px; height: 15px; }
   #scope { flex: none; max-width: 26ch; }
   #goto { flex: none; width: 7ch; text-align: center; font-family: var(--mono); }
   #goto.lost { border-color: var(--del-ink); color: var(--del-ink); }
@@ -615,6 +617,23 @@
   .tray li b { color: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 600; }
   .tray .actions { display: flex; gap: 8px; }
 
+  dialog#prefs {
+    width: min(400px, calc(100vw - 32px));
+    padding: 0;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+  dialog#prefs::backdrop { background: color-mix(in srgb, #000 46%, transparent); }
+  dialog#prefs form { display: flex; flex-direction: column; gap: 14px; padding: 14px 16px 16px; }
+  dialog#prefs .head strong { font-size: 14px; }
+  dialog#prefs fieldset { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; border: 0; }
+  dialog#prefs legend { padding: 0; font-size: 10px; font-weight: 650; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
+  dialog#prefs .choice { display: flex; flex-wrap: wrap; gap: 6px; }
+  dialog#prefs .actions { display: flex; align-items: center; gap: 10px; padding-top: 12px; border-top: 1px solid var(--rule); }
+
   .source {
     position: fixed;
     top: calc(var(--head) + 8px);
@@ -713,7 +732,25 @@
   </div>
   <button class="toggle" id="logopen" title="Every comment recorded, and where each one stands">Comments<i class="dot" id="logdot" aria-hidden="true"></i></button>
   <button class="solid" id="moved" disabled title="Refresh the diffs once the branch has moved on">Refresh</button>
+  <button class="toggle icon" id="prefsopen" title="Settings" aria-label="Settings">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.4v1.8M8 12.8v1.8M1.4 8h1.8M12.8 8h1.8M3.3 3.3l1.3 1.3M11.4 11.4l1.3 1.3M12.7 3.3l-1.3 1.3M4.6 11.4l-1.3 1.3"/></svg>
+  </button>
 </header>
+
+<dialog id="prefs">
+  <form method="dialog">
+    <div class="head"><strong>Settings</strong></div>
+    <fieldset>
+      <legend>Appearance</legend>
+      <div class="choice" id="prefstheme" role="radiogroup" aria-label="Appearance">
+        <button type="button" class="toggle" value="auto" aria-pressed="false">Match the system</button>
+        <button type="button" class="toggle" value="light" aria-pressed="false">Light</button>
+        <button type="button" class="toggle" value="dark" aria-pressed="false">Dark</button>
+      </div>
+    </fieldset>
+    <div class="actions"><button class="solid" value="close">Done</button><span class="status" id="prefsbuilt"></span></div>
+  </form>
+</dialog>
 
 <div class="source" id="source" data-open="false">
     <div class="body">
@@ -801,7 +838,7 @@
   let heard = {};
 
   const els = {};
-  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "logresolved", "brand", "repo", "source", "sourceopen", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus", "moved", "goto", "toast", "toastsaid", "toastclose", "logdot"]) {
+  for (const id of ["tabs", "scope", "q", "ctx", "hidedone", "filelist", "main", "tplus", "tminus", "pfill", "ptext", "tray", "traycount", "traylist", "traynote", "traysend", "traydrop", "tograb", "togh", "ghlabel", "trayresult", "logopen", "log", "logcount", "logrows", "logretry", "logbind", "logsync", "logclose", "logresult", "logresolved", "brand", "repo", "source", "sourceopen", "srcdir", "srcbase", "srcfilter", "srcrefs", "srcpulls", "srcscan", "srcstatus", "moved", "goto", "toast", "toastsaid", "toastclose", "logdot", "prefs", "prefsopen", "prefstheme", "prefsbuilt"]) {
     els[id] = document.getElementById(id);
   }
 
@@ -1245,6 +1282,33 @@
       localStorage.setItem("diffdesk.drafts", JSON.stringify({ review: review(), note: els.traynote.value, held: notes.drafts }));
     } catch (error) {
       // A storage that refuses to be written is one the reader will notice on their own.
+    }
+  }
+
+  // What the reader has chosen about the page itself, which belongs to them rather than to any one review.
+  const PREFS = "diffdesk.prefs";
+  const prefs = { theme: "auto" };
+
+  function takePrefs() {
+    try {
+      Object.assign(prefs, JSON.parse(localStorage.getItem(PREFS) || "{}"));
+    } catch (error) {
+      // A store that cannot be read is a page with the defaults, which is no worse than a first visit.
+    }
+    showPrefs();
+  }
+
+  function showPrefs() {
+    // Matching the system is the absence of a choice, which is what the stylesheet reads a missing attribute as.
+    if (prefs.theme === "auto") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = prefs.theme;
+    for (const button of els.prefstheme.querySelectorAll("button")) {
+      button.setAttribute("aria-pressed", String(button.value === prefs.theme));
+    }
+    try {
+      localStorage.setItem(PREFS, JSON.stringify(prefs));
+    } catch (error) {
+      // Not worth refusing the choice over; it simply will not outlive the tab.
     }
   }
 
@@ -2685,7 +2749,17 @@
     render();
   });
 
+  els.prefsopen.addEventListener("click", () => els.prefs.showModal());
+  els.prefstheme.addEventListener("click", (event) => {
+    const chosen = event.target.closest("button");
+    if (!chosen) return;
+    prefs.theme = chosen.value;
+    showPrefs();
+  });
+
   document.addEventListener("keydown", (event) => {
+    // A dialog holds the page behind it, and a letter pressed in one is not a shortcut of the page.
+    if (els.prefs.open) return;
     if (["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) {
       if (event.key === "Escape") event.target.blur();
       return;
@@ -2754,6 +2828,9 @@
   new ResizeObserver(measureHead).observe(document.querySelector("header"));
   measureHead();
 
+  takePrefs();
+  // The moment the diffs on screen were read off git, which is worth a glance and not a line of the bar.
+  els.prefsbuilt.textContent = els.brand.dataset.built;
   loadSeen();
   loadFolded();
   takeHeard();

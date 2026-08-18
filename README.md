@@ -104,6 +104,8 @@ the end of the file it belonged to. Neither is ever resolved or deleted on your 
   page redrawing itself under it. Every box grows with what is written into it, up to the point where a long remark
   would push the diff off screen and scrolls inside instead. A comment keeps the little markdown that carries meaning:
   fenced blocks and backticks stay code, and a run of `>` lines reads as the passage it quotes.
+- **Settings**, from the gear in the header: light, dark, or whatever the system says, remembered across visits, and
+  the moment the diffs on screen were read off git.
 - **The file list is a tree** following the repository's folders, each foldable and remembered across reloads, with a
   count per folder. A chain of single-child directories is one row, so a deep path costs one line and not one per
   level. Walking onto a file inside a folded folder reveals it.

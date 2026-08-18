@@ -1764,3 +1764,27 @@ def test_a_reply_below_the_fold_is_not_taken_for_read(page, desk):
     page.wait_for_timeout(150)
     assert page.locator(f"#note-{made} .thread.folded").count() == 1
     page.evaluate("() => localStorage.clear()")
+
+
+def test_the_appearance_chosen_in_settings_outlives_the_tab(page):
+    page.locator("#prefsopen").click()
+    page.wait_for_function("() => document.getElementById('prefs').open")
+    # Matching the system is the absence of a choice, which is what the stylesheet reads a missing attribute as.
+    assert page.locator("html").get_attribute("data-theme") is None
+    assert page.locator("#prefstheme button[value='auto']").get_attribute("aria-pressed") == "true"
+    page.locator("#prefstheme button[value='dark']").click()
+    assert page.locator("html").get_attribute("data-theme") == "dark"
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    assert page.locator("html").get_attribute("data-theme") == "dark"
+    page.locator("#prefsopen").click()
+    page.locator("#prefstheme button[value='light']").click()
+    assert page.locator("html").get_attribute("data-theme") == "light"
+    # A letter typed in the dialog is not a shortcut of the page behind it.
+    reviewed = page.evaluate("() => document.querySelectorAll(\"section.file[data-done='true']\").length")
+    page.locator("#prefstheme button[value='light']").press("r")
+    assert page.evaluate("() => document.querySelectorAll(\"section.file[data-done='true']\").length") == reviewed
+    page.locator("#prefstheme button[value='auto']").click()
+    page.locator("#prefs button.solid").click()
+    page.wait_for_function("() => !document.getElementById('prefs').open")
+    assert page.locator("html").get_attribute("data-theme") is None
