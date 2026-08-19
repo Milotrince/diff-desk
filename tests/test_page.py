@@ -371,6 +371,133 @@ def test_a_folded_thread_says_what_it_is_about_even_when_it_is_only_code(page, d
     assert fits
 
 
+def test_code_and_comments_stay_legible_in_every_theme(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    made = desk.post(
+        "/comments",
+        [{"branch": branch, "path": "sample.py", "line": SECOND_EDIT, "side": "new", "text": "words, not a code line"}],
+    )
+    page.reload(wait_until="load")
+    page.wait_for_selector(f"#note-{made['seq']} .thread")
+    # Resolved, which paints a thread the green of an added line: the case where its own ground tells the reader nothing
+    # and the delimiter is all there is to go on.
+    page.locator(f"#note-{made['seq']} button.solid").filter(has_text="Resolve").click()
+    page.wait_for_selector(f"#note-{made['seq']} .thread.done")
+    # Shown whole again: the reader's own resolve folds a thread, and a folded one carries no box to reply in.
+    page.locator(f"#note-{made['seq']} button.tiny").filter(has_text="resolved").click()
+    page.wait_for_selector(f"#note-{made['seq']} .thread:not(.folded) .actions textarea")
+
+    read = """({theme, seq}) => {
+      const root = document.documentElement;
+      if (theme) root.dataset.theme = theme;
+      else delete root.dataset.theme;
+      // A token is a string until something is painted with it, and a ratio needs the channels it resolves to.
+      const probe = document.createElement("span");
+      document.body.append(probe);
+      const painted = (token) => {
+        probe.style.color = getComputedStyle(root).getPropertyValue(token).trim();
+        return getComputedStyle(probe).color;
+      };
+      const lit = (colour) => {
+        const parts = colour.match(/[\\d.]+/g).slice(0, 3).map(Number);
+        const [r, g, b] = parts.map((v) => (v / 255 <= 0.04045 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4));
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const against = (fore, back) => {
+        const [high, low] = [lit(fore), lit(back)].sort((one, two) => two - one);
+        return (high + 0.05) / (low + 0.05);
+      };
+      const tokens = {};
+      for (const name of ["--ink", "--muted", "--faint", "--surface", "--surface-sunk", "--add-ink", "--add-bg",
+                          "--del-ink", "--del-bg", "--rule", "--rule-strong"]) {
+        tokens[name] = painted(name);
+      }
+      probe.remove();
+      const thread = document.querySelector(`#note-${seq} .thread`);
+      const row = thread.closest("tr");
+      const body = thread.closest(".body");
+      const style = getComputedStyle(thread);
+      const box = thread.getBoundingClientRect();
+      const held = row.getBoundingClientRect();
+      const view = body.getBoundingClientRect();
+      const code = [...body.querySelectorAll("tr[data-line] td.code")].map(
+        (cell) => cell.getBoundingClientRect().height
+      );
+      return {
+        tokens,
+        code: against(tokens["--ink"], tokens["--surface"]),
+        added: against(tokens["--add-ink"], tokens["--add-bg"]),
+        removed: against(tokens["--del-ink"], tokens["--del-bg"]),
+        muted: against(tokens["--muted"], tokens["--surface"]),
+        // The quietest grey of the lot carries the line numbers, on the rail they are printed against.
+        faint: against(tokens["--faint"], tokens["--surface-sunk"]),
+        addTint: against(tokens["--add-bg"], tokens["--surface"]),
+        delTint: against(tokens["--del-bg"], tokens["--surface"]),
+        outline: ["Top", "Right", "Bottom", "Left"].map((side) => parseFloat(style[`border${side}Width`])),
+        radius: parseFloat(style.borderTopLeftRadius),
+        lifted: style.boxShadow !== "none",
+        airAbove: Math.round(box.top - held.top),
+        airBelow: Math.round(held.bottom - box.bottom),
+        fill: style.backgroundColor,
+        edge: style.borderTopColor,
+        band: getComputedStyle(row.querySelector("td")).backgroundColor,
+        codeFill: getComputedStyle(document.querySelector("tr.a td.code")).backgroundColor,
+        leftGap: Math.round(box.left - view.left),
+        rightGap: Math.round(view.right - box.right),
+        codeSpread: Math.max(...code) - Math.min(...code),
+        reply: (() => {
+          const box = thread.querySelector(".actions textarea");
+          const said = getComputedStyle(box);
+          return { ink: said.color, ground: said.backgroundColor };
+        })(),
+      };
+    }"""
+
+    arms = {}
+    for name, scheme, theme in (("system", "dark", None), ("toggled", "light", "dark"), ("light", "light", None)):
+        page.emulate_media(color_scheme=scheme)
+        arms[name] = page.evaluate(read, {"theme": theme, "seq": made["seq"]})
+    # Dark is written twice, for the system setting and for the explicit toggle, and the two must say the same thing.
+    assert arms["system"]["tokens"] == arms["toggled"]["tokens"]
+
+    for seen in (arms["system"], arms["toggled"]):
+        # Code is read letter by letter, on the card and on a changed line's own tint alike, so it carries the contrast
+        # of print rather than the minimum that passes for large text. What is only a label may sit one step quieter.
+        assert seen["code"] >= 7
+        assert seen["added"] >= 7
+        assert seen["removed"] >= 7
+        assert seen["muted"] >= 4.5
+        assert seen["faint"] >= 4.5
+        # A changed line says so by its ground, and a ground the eye cannot separate from the card says nothing. No
+        # standard covers this: a diff tint is a wash by design, and the bar is the step at which a wash is seen at all.
+        assert seen["addTint"] >= 1.05
+        assert seen["delTint"] >= 1.05
+
+    for seen in arms.values():
+        # The box a reply is written in is dressed by the page like every other, or it paints the browser's own white
+        # over a dark thread - the one patch a reader cannot read at all.
+        assert seen["reply"]["ink"] == seen["tokens"]["--ink"]
+        assert seen["reply"]["ground"] == seen["tokens"]["--surface"]
+        # Outlined all round rather than on the left alone, rounded and lifted: a card over the diff, in either theme.
+        assert min(seen["outline"]) >= 1
+        assert seen["outline"][3] >= 3
+        assert seen["radius"] > 0
+        assert seen["lifted"]
+        # The air above and below belongs to the comment's own row, so the code around it keeps the height it had. Code
+        # rows sit within a pixel of each other across engines, an order below the air a leak of it would add.
+        assert seen["airAbove"] >= 4
+        assert seen["airBelow"] >= 4
+        assert seen["codeSpread"] <= 1
+        # Still flush with the view at both edges, which is what keeps everything the thread carries reachable.
+        assert seen["leftGap"] == 0
+        assert seen["rightGap"] == 0
+        # Resolved, it is washed the green of an added line: the outline and the row's ground showing above and below
+        # are then the whole of the delimiter, so both have to differ from what fills it.
+        assert seen["fill"] == seen["codeFill"]
+        assert seen["edge"] != seen["fill"]
+        assert seen["band"] != seen["fill"]
+
+
 def test_a_comment_stays_inside_the_view_when_the_diff_is_scrolled(page, desk):
     branch = page.evaluate("() => data.branches[0].ref")
     long = "A remark long enough to need clipping: " + "the quick brown fox jumps over the lazy dog. " * 12
