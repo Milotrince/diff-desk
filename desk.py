@@ -1,7 +1,7 @@
 """One entry point for the diff desk: serve a branch for review, then pick up the comments it collects.
 
 desk.py serve --dir <repo> --base <ref> [refs ...]   collect the diffs and serve them (blocks)
-desk.py watch [--since N] [--once]                   print whatever the reviewer says, as they say it
+desk.py watch [--since N] [--follow]                 wait for the reviewer to say something, print it and stop
 desk.py comments [--all]                             what has been submitted, unresolved unless --all
 desk.py reply 3 "why it happens ..."                 answer a comment without closing it
 desk.py reply 3 --note "look at this again"          leave a note, which never reaches the pull request
@@ -139,15 +139,25 @@ def show(note, since=None):
 
 
 def heard_upto():
-    """The event the last watch stopped at, or None if nothing has ever watched this desk."""
+    """The event the last watch stopped at, or None if nothing has ever watched this desk.
+
+    A cursor that cannot be read is one that was never written: starting over from the oldest open comment repeats what
+    has been dealt with, which is a great deal better than a traceback in place of a review.
+    """
     kept = gen_diff_data.home() / "watched.json"
-    return json.loads(kept.read_text())["event"] if kept.exists() else None
+    try:
+        return json.loads(kept.read_text())["event"]
+    except (OSError, ValueError, KeyError):
+        return None
 
 
 def stop_at(event, desk=None):
+    """Write the cursor in one step, so a watch interrupted mid-write leaves it readable."""
     kept = gen_diff_data.home() / "watched.json"
     held = json.loads(kept.read_text()) if kept.exists() else {}
-    kept.write_text(json.dumps({"event": event, "desk": desk if desk is not None else held.get("desk")}))
+    spare = kept.with_suffix(".writing")
+    spare.write_text(json.dumps({"event": event, "desk": desk if desk is not None else held.get("desk")}))
+    os.replace(spare, kept)
 
 
 def serving():
@@ -160,6 +170,17 @@ def armed_against():
     """The run of the desk the last watch was armed against."""
     kept = gen_diff_data.home() / "watched.json"
     return json.loads(kept.read_text()).get("desk") if kept.exists() else None
+
+
+def said_at(row):
+    """The last event the reviewer made on this comment, which is the only news a watch is waiting for.
+
+    A desk too old to keep that apart says only who made the row's latest event; read that way, a remark this desk
+    wrote over - by posting the very comment it was recording - reads as nothing said.
+    """
+    if "said" in row:
+        return row["said"]
+    return row.get("event", row.get("seq", 0)) if row.get("eventBy") == "you" else 0
 
 
 def serve(args):
@@ -183,59 +204,85 @@ def serve(args):
     serve_diff.main(serve_diff.Source(args.dir, args.base, args.refs))
 
 
-def watch(args):
-    """Block until the reviewer says something, then print it. This is how a session picks up a review.
+# What a watch says on the way out, since that is the whole of what a session hears when one is armed in the background.
+HEARD, GONE, NOTHING = 0, 3, 4
+# Unanswered polls before the desk counts as gone rather than as a reviewer with nothing to say. More than one, because
+# a desk rebuilding a page for a reload answers nothing while it does.
+DEAF = 3
 
-    What it follows is the log's event cursor rather than the comment numbers, so a reply on a comment the session has
-    already read wakes it just as a new comment does - and the reviewer's answer to a question is not lost because the
-    comment it hangs on is old news.
 
-    Where it stopped is written down, so watching again carries on from there. That is what makes a watch that stops at
-    the first word usable: a session arms it, is woken, answers, and arms it again, with the same reply never waking it
-    twice - whereas one starting over from the oldest open comment reported what had just been dealt with, each time.
+def resume_from(args, sent):
+    """The event a watch picks up from: where the last one stopped, or before the oldest thing still unaddressed.
+
+    Anything still open is unaddressed, whenever it arrived, so a first watch starts before it rather than after: a
+    cursor set to the end swallows whatever was written while the last batch was being worked on.
     """
-    if ask("/data") is None:
-        sys.exit("nothing is serving; start with 'desk.py serve' first")
-    sent = ask("/comments") or []
-    # Anything still open is unaddressed, whenever it arrived, so a first watch starts before it rather than after: a
-    # cursor set to the end swallows whatever was written while the last batch was being worked on.
-    waiting = [row.get("event", row["seq"]) for row in sent if row.get("state") == "open"]
-    stopped = heard_upto()
     if args.since is not None:
-        since = args.since
-    elif stopped is not None:
-        since = stopped
-    elif waiting:
-        since = min(waiting) - 1
-    else:
-        since = max((row.get("event", row["seq"]) for row in sent), default=0)
+        return args.since
+    stopped = heard_upto()
+    if stopped is not None:
+        return stopped
+    waiting = [said_at(row) for row in sent if row.get("state") == "open" and said_at(row)]
+    if waiting:
+        return min(waiting) - 1
+    return max((said_at(row) for row in sent), default=0)
+
+
+def watch(args):
+    """Block until the reviewer says something, then print it and stop. This is how a session picks up a review.
+
+    Stopping is the point: the only thing that reaches a session is a background command exiting, so a watch that keeps
+    running prints into a buffer nobody is woken to read. `--follow` is for a person watching a terminal.
+
+    What it follows is what the reviewer has said, rather than the comment numbers, so a reply on a comment the session
+    has already read wakes it just as a new comment does. Where it stopped is written down, so arming it again carries
+    on from there: the same reply never wakes a session twice, and nothing said while it was answering is lost.
+    """
+    # A watch is the one command whose output is read by something other than a person - the Stop hook hands it
+    # straight to a session - so what it has heard goes to stdout and everything about the watch itself goes to stderr.
+    if ask("/data") is None:
+        print("nothing is serving; start with 'desk.py serve' first", file=sys.stderr, flush=True)
+        return GONE
+    since = resume_from(args, ask("/comments") or [])
     # A watch outlives the desk it was armed against: a restarted desk carries whatever the tool has become, wording
     # and all, so one armed against the run before it is reading something that no longer exists.
     running = serving()
     if running is not None and armed_against() not in (None, running):
-        print("the desk has been restarted since this watch was armed; arm it again", flush=True)
-        return
-    print(f"watching for anything said past event {since}", flush=True)
+        print("the desk has been restarted since this watch was armed; arm it again", file=sys.stderr, flush=True)
+        return GONE
+    print(f"watching for anything said past event {since}", file=sys.stderr, flush=True)
     stop_at(since, running)
     deadline = time.monotonic() + args.timeout if args.timeout else None
-    # Never returns of its own accord: a reviewer says one thing, then another, and a watch that stopped at the first
-    # left every word after it unheard - which is what happened before it kept going.
+    missed = 0
     while deadline is None or time.monotonic() < deadline:
-        # The session's own writes bump the cursor too, so what it is waiting for is told from what it just did.
-        fresh = [row for row in (ask(f"/comments?event={since}") or []) if row.get("eventBy") == "you"]
-        if fresh:
-            print(f"{len(fresh)} comment(s) with news:", flush=True)
-            for note in fresh:
-                show(note, since)
-            since = max(row.get("event", row["seq"]) for row in fresh)
-            stop_at(since, running)
-            if args.once:
-                return
-        if serving() not in (None, running):
-            print("the desk has been restarted; arm the watch again", flush=True)
-            return
-        time.sleep(args.every)
-    print("nothing said within the timeout")
+        answer = ask(f"/comments?said={since}")
+        if answer is None:
+            # A desk that has gone is silent in exactly the way a reviewer with nothing to say is silent, and a watch
+            # that cannot tell them apart waits on a dead port while the session believes it is armed. So it is
+            # counted, and said out loud rather than waited out.
+            missed += 1
+            if missed >= DEAF:
+                gone = f"the desk on {URL} stopped answering; nothing is watching this review"
+                print(gone, file=sys.stderr, flush=True)
+                return GONE
+        else:
+            missed = 0
+            fresh = [row for row in answer if said_at(row) > since]
+            if fresh:
+                print(f"{len(fresh)} comment(s) with news:", flush=True)
+                for note in fresh:
+                    show(note, since)
+                since = max(said_at(row) for row in fresh)
+                stop_at(since, running)
+                if not args.follow:
+                    return HEARD
+            if serving() not in (None, running):
+                print("the desk has been restarted; arm the watch again", file=sys.stderr, flush=True)
+                return GONE
+        # Never sleeping past the deadline: a check meant to cost a moment costs a whole poll interval otherwise.
+        time.sleep(args.every if deadline is None else max(0.0, min(args.every, deadline - time.monotonic())))
+    print("nothing said within the timeout", file=sys.stderr, flush=True)
+    return NOTHING
 
 
 def comments(args):
@@ -346,14 +393,21 @@ job.set_defaults(run=serve)
 
 job = jobs.add_parser(
     "watch",
-    help="block until a review batch is submitted",
-    description="Reports to stdout, so a session has to be reading that stream: redirected to a file, the watch runs "
-    "and reports to nobody.",
+    help="block until the reviewer says something, print it and stop",
+    description="What it heard goes to stdout and how the watch itself went to stderr, so a hook can hand the one over "
+    "and say the other. What reaches a session is this command exiting, so a report redirected to a file is a report "
+    "nobody reads.",
 )
 job.add_argument(
     "--since", type=int, default=None, help="event to resume from; where the last watch stopped by default"
 )
-job.add_argument("--once", action="store_true", help="stop after the first thing said, rather than keeping watch")
+job.add_argument(
+    "--follow",
+    action="store_true",
+    help="keep printing rather than stopping at the first thing said; for a terminal being read, since a command that "
+    "does not exit tells a session nothing",
+)
+job.add_argument("--once", action="store_true", help=argparse.SUPPRESS)
 job.add_argument("--every", type=float, default=10.0, help="seconds between polls")
 job.add_argument("--timeout", type=float, default=0.0, help="give up after this many seconds; 0 waits forever")
 job.set_defaults(run=watch)
@@ -402,4 +456,5 @@ job.set_defaults(run=refs)
 
 if __name__ == "__main__":
     known = parser.parse_args()
-    known.run(known)
+    # A watch says how it went in its exit code, since that is all a session armed in the background is told.
+    sys.exit(known.run(known) or 0)

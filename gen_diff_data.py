@@ -23,6 +23,71 @@ def home():
     return where
 
 
+def running_dir():
+    """Where a serving desk leaves its address, so anything looking for a review can find one without being told."""
+    where = pathlib.Path(os.environ.get("DIFF_DESK_RUNNING", pathlib.Path.home() / ".claude" / "diff-desk-running"))
+    where.mkdir(parents=True, exist_ok=True)
+    return where
+
+
+def register(port, root, base, refs):
+    """Leave this desk's address, replacing whatever a desk on the same port left behind."""
+    card = running_dir() / f"{port}.json"
+    spare = card.with_suffix(".writing")
+    spare.write_text(
+        json.dumps(
+            {
+                "port": port,
+                "pid": os.getpid(),
+                "home": str(home()),
+                "root": str(pathlib.Path(root).resolve()),
+                "base": base,
+                "refs": list(refs or []),
+            }
+        )
+    )
+    os.replace(spare, card)
+
+
+def unregister(port):
+    (running_dir() / f"{port}.json").unlink(missing_ok=True)
+
+
+def alive(pid):
+    """Whether that process is still there. One owned by somebody else is there, refusing to be signalled.
+
+    A pid of 0 is the caller's whole process group rather than a process, so it is not one of these.
+    """
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def running():
+    """Every desk that left an address and is still alive, dropping the address of one that is not.
+
+    A desk killed rather than asked to stop leaves its address behind, and an address is worse than useless once the
+    desk is gone: whatever follows it waits on a port nobody is listening on.
+    """
+    live = []
+    for card in sorted(running_dir().glob("*.json")):
+        try:
+            desk = json.loads(card.read_text())
+        except (OSError, ValueError):
+            continue
+        if desk.get("root") and alive(desk.get("pid")):
+            live.append(desk)
+        else:
+            card.unlink(missing_ok=True)
+    return live
+
+
 def run(root, *args):
     """Ask git something. A command that fails answers with nothing, which every caller reads as absence."""
     return subprocess.run(["git", *args], capture_output=True, text=True, cwd=root, check=False).stdout

@@ -1726,6 +1726,14 @@ def test_the_pinned_file_head_clears_the_page_header(page, width):
     assert look["head"]
 
 
+def test_an_open_page_tells_the_desk_that_somebody_is_reading(page, desk):
+    # Which is what decides whether a session's turn is held open for a comment: a review nobody has open is a review
+    # nobody is about to comment on, and a page just loaded is the plainest sign there is that somebody is at it.
+    reading = until(lambda: desk.get("/state")["reading"])
+    # Asking after the state is not reading it, or whatever waits on a reviewer would answer its own question.
+    assert desk.get("/state")["reading"] == reading
+
+
 def test_marking_a_file_reviewed_outlives_the_browser_it_was_made_in(page, desk):
     card = sample(page)
     card.locator("input[type=checkbox]").check()

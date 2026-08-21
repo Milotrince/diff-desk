@@ -69,6 +69,15 @@ Nothing leaves this desk on its own.
 
 Every comment is recorded to `~/.claude/diff-desk/comments.jsonl`, numbered, with an event cursor every write bumps.
 
+What carries a batch to a session is the Stop hook, so there is nothing to arm:
+
+    "hooks": {"Stop": [{"hooks": [{"type": "command",
+      "command": "python3 ~/.claude/skills/diff-desk/on_stop.py", "asyncRewake": true, "timeout": 1800}]}]}
+
+It runs when the session would have gone idle, finds the desk serving the tree it is working in, and hands over anything the reviewer has said. Installed with `asyncRewake` it then waits in the background while the page is open, so a comment written twenty minutes later wakes the session too. `DIFF_DESK_WAIT` sets how long it waits (1500 seconds by default, 0 to hand over only what has already landed), and `DIFF_DESK_LOOK` how long since the page last asked still counts as being read.
+
+The same commands by hand, the watch being what the hook runs:
+
     python3 desk.py watch                                     # block until something is said, print it, exit
     python3 desk.py comments                                  # what is outstanding, with replies and GitHub standing
     python3 desk.py reply 3 "it happens because ..."          # answer, leaving it open
@@ -78,15 +87,17 @@ Every comment is recorded to `~/.claude/diff-desk/comments.jsonl`, numbered, wit
     python3 desk.py edit 3 --reply 0 "worded better ..."      # rewrite one reply, by its place in the thread
     python3 desk.py sync                                      # bring the pull request's comments in
 
-The watch follows the cursor, so an answer written on a comment read long ago arrives exactly as a new comment does, and each event says which side made it, so a session never mistakes its own reply for news. It reports to stdout and nowhere else. The page picks all of it up on its own, threading the replies under the comment.
+The watch follows what the reviewer has said on each thread, so an answer written on a comment read long ago arrives exactly as a new comment does, and their own latest event is kept apart from the row's, so a comment recorded and then posted to the pull request - two writes to one row, the second the desk's own - is still heard. It stops at the first thing said, because a background command that does not exit tells a session nothing; `--follow` keeps it printing, for a terminal being read. What it heard goes to stdout and how the watch went to stderr, so a report sent to a file is a report nobody reads, and its exit code says how it went: 0 heard something, 3 found no desk or one restarted under it, 4 waited out its `--timeout`. The page picks all of it up on its own, threading the replies under the comment.
 
 A sync brings the pull request's own comments in, each carrying its author, so a remark a reviewer or a bot wrote there reaches the session through the watch and can be answered. Those the desk answers rather than rewrites: the remark stays its author's word.
 
-Dropped into `~/.claude/skills/diff-desk/`, this is a Claude Code skill and the flow above needs no explaining - `SKILL.md` tells the session how to serve a review, wait for comments, and close them out.
+Dropped into `~/.claude/skills/diff-desk/`, this is a Claude Code skill and the flow above needs no explaining - `SKILL.md` tells the session how to serve a review and close the comments out. Add the Stop hook to `~/.claude/settings.json` as well, and submitting a comment is all it takes to put the session back to work on it.
 
 ## Where things live
 
 State is `~/.claude/diff-desk/`, overridden with `DIFF_DESK_HOME`; the port is `DIFF_DESK_PORT`. One log holds every review the desk has served, each comment recording which pull request it was sent to, so posting, resolving or syncing one review never reaches another's comments.
+
+A serving desk also leaves its port, home and repository in `~/.claude/diff-desk-running/`, overridden with `DIFF_DESK_RUNNING`, and removes them as it stops. That is how the hook finds the review a session is reading without being told a port or a home, and an address whose desk is gone is dropped by whoever reads it next.
 
 A review is identified by its pull request, not by the ref it is read from. The same work opened from its branch, from the head fetched by number, or from the number typed in is one review: its comments and its reviewed ticks follow it across all three.
 
@@ -95,6 +106,7 @@ A review is identified by its pull request, not by the ref it is read from. The 
 | file | what it is |
 | --- | --- |
 | `desk.py` | the entry point: `serve`, `watch`, `comments`, `reply`, `edit`, `resolve`, `bind`, `sync`, `refs` |
+| `on_stop.py` | the Stop hook: hands a session the comments when it would have gone idle |
 | `gen_diff_data.py` | turns a git range into the payload a page renders: hunks, digests, pull request threads |
 | `serve_diff.py` | the local server: the page, rescans, file slices, comments, resolutions, pull request posts |
 | `diff_desk_template.html` | the page itself, with `__DIFF_DATA__` and `__BUILD__` substituted at build time |

@@ -13,7 +13,7 @@ import urllib.request
 import pytest
 
 import gen_diff_data
-from conftest import FILE_LINES, ROOT, SECOND_EDIT, until
+from conftest import FILE_LINES, ROOT, SECOND_EDIT, free_port, until
 from serve_diff import is_refusal
 
 # What one of these records the next reads back out of the same desk, so they belong to one worker of a parallel run
@@ -1349,17 +1349,17 @@ def test_watching_hears_everything_said_not_only_the_first(desk):
     def reached(event):
         return stopped.exists() and json.loads(stopped.read_text())["event"] >= event
 
-    watching = desk.cli("watch", "--every", "0.2", "--timeout", "20")
+    watching = desk.cli("watch", "--follow", "--every", "0.2", "--timeout", "20")
     try:
         # Two things said one after the other: a watch that stopped at the first left the second unheard.
         first = desk.post(
             "/comments",
             [{"branch": "feature", "path": "sample.py", "line": 71, "side": "new", "text": "the first word"}],
         )["seqs"][0]
-        spoken = {row["seq"]: row for row in desk.get("/comments")}[first]["event"]
+        spoken = {row["seq"]: row for row in desk.get("/comments")}[first]["said"]
         until(lambda: reached(spoken))
         desk.post("/reply", {"seq": first, "text": "and the second word", "who": "you"})
-        answered = {row["seq"]: row for row in desk.get("/comments")}[first]["event"]
+        answered = {row["seq"]: row for row in desk.get("/comments")}[first]["said"]
         until(lambda: reached(answered))
     finally:
         watching.terminate()
@@ -1372,7 +1372,8 @@ def test_watching_hears_everything_said_not_only_the_first(desk):
     assert "*[0] you" in said
 
     # Watching again carries on from where that one stopped: what has been heard once does not wake anything twice, and
-    # a watch that stops at the first word can therefore be armed again after answering it.
+    # a watch that stops at the first word can therefore be armed again after answering it. Armed here the way a
+    # session that read an older skill arms it, since stopping at the first word is now what a watch does unasked.
     again = desk.cli("watch", "--once", "--every", "0.2", "--timeout", "3")
     assert "the first word" not in again.communicate(timeout=30)[0]
     desk.post("/reply", {"seq": first, "text": "and a third word", "who": "you"})
@@ -1388,6 +1389,127 @@ def test_watching_hears_everything_said_not_only_the_first(desk):
     told = desk.cli("watch", "--once", "--every", "0.2", "--timeout", "20").communicate(timeout=40)[0]
     assert "arm it again" in told
     stopped.write_text(json.dumps(armed))
+
+
+def test_a_comment_posted_to_the_pull_request_is_still_heard(desk):
+    # Recording a comment bound for the pull request and posting it are two writes to the same row, and the second is
+    # this desk's own. Held in one stamp, the posting landed on top of the reviewer's word and the comment was never
+    # heard at all - which is every comment of a review submitted with the pull request ticked.
+    desk.github_answers(out=json.dumps({"html_url": "https://github.com/o/r/pull/7#pullrequestreview-1"}))
+    made = desk.post(
+        "/comments",
+        {
+            "comments": [
+                {"branch": "feature", "path": "sample.py", "line": 63, "side": "new", "text": "worth posting there"}
+            ],
+            "github": True,
+        },
+    )
+    seq = made["seqs"][0]
+    assert desk.post("/publish", {"repo": "o/r", "pr": 7, "summary": "", "seq": [seq]})["ok"]
+    row = {held["seq"]: held for held in desk.get("/comments")}[seq]
+    # The desk's own posting is the last thing that happened to the row, and the reviewer's word is kept apart from it.
+    assert row["eventBy"] == "session"
+    assert 0 < row["said"] < row["event"]
+    assert [held["seq"] for held in desk.get(f"/comments?said={row['said'] - 1}")] == [seq]
+    heard = desk.cli("watch", "--every", "0.2", "--timeout", "20")
+    said = heard.communicate(timeout=40)[0]
+    assert "worth posting there" in said
+    assert heard.returncode == 0
+
+
+def test_a_watch_stops_at_the_first_thing_said_and_says_how_it_went(desk):
+    # The only thing a background command tells a session is that it exited, so stopping is what a watch does without
+    # being asked for it: one that keeps running prints into a buffer nobody is woken to read.
+    watching = desk.cli("watch", "--every", "0.2", "--timeout", "30")
+    desk.post(
+        "/comments",
+        [{"branch": "feature", "path": "sample.py", "line": 64, "side": "new", "text": "one word, then stop"}],
+    )
+    said = watching.communicate(timeout=60)[0]
+    assert watching.returncode == 0
+    assert said.count("comment(s) with news") == 1
+    # Nothing said inside the window is a different answer from something said, so a hook can tell them apart.
+    quiet = desk.cli("watch", "--every", "0.2", "--timeout", "1")
+    quiet.communicate(timeout=30)
+    assert quiet.returncode == 4
+
+
+def test_a_watch_says_when_the_desk_has_gone_rather_than_waiting_on_it(desk):
+    # A port nobody is listening on is silent in exactly the way a reviewer with nothing to say is silent. A watch that
+    # cannot tell them apart waits for ever while the session believes it is armed.
+    nowhere = subprocess.run(
+        [sys.executable, str(ROOT / "desk.py"), "watch", "--every", "0.1", "--timeout", "5"],
+        cwd=ROOT,
+        env={**os.environ, "DIFF_DESK_HOME": str(desk.home), "DIFF_DESK_PORT": str(free_port())},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert nowhere.returncode == 3
+    # On stderr, because a hook reads this command's stdout as the comments themselves.
+    assert "nothing is serving" in nowhere.stderr
+    assert not nowhere.stdout.strip()
+
+
+def test_the_stop_hook_hands_a_comment_over_without_anything_being_armed(desk):
+    # The whole point: no watch armed, nothing remembered from the last batch, and the comment still reaches the
+    # session - because the hook runs when the session would have gone idle instead of having to be started first.
+    seq = desk.post(
+        "/comments",
+        [{"branch": "feature", "path": "sample.py", "line": 65, "side": "new", "text": "nobody armed a watch"}],
+    )["seqs"][0]
+
+    def stopping():
+        return subprocess.run(
+            [sys.executable, str(ROOT / "on_stop.py")],
+            input=json.dumps({"session_id": "s", "cwd": str(desk.repo), "stop_hook_active": False}),
+            # Nothing to wait for: what has landed is handed over, and the waiting arm is the page's business.
+            env={**os.environ, "DIFF_DESK_WAIT": "0"},
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+        )
+
+    told = stopping()
+    # Which is how a Stop hook refuses the stop and puts what it says back in front of the session.
+    assert told.returncode == 2
+    assert "nobody armed a watch" in told.stderr
+    assert str(desk.repo) in told.stderr
+    # Answered, and the same comment does not stop the session a second time.
+    desk.post("/resolve", {"seq": [seq], "answer": "done", "resolved": True, "who": "session"})
+    assert stopping().returncode == 0
+    # A session working somewhere else is left alone, however much is waiting on this desk.
+    desk.post(
+        "/comments",
+        [{"branch": "feature", "path": "sample.py", "line": 66, "side": "new", "text": "not this session's review"}],
+    )
+    elsewhere = subprocess.run(
+        [sys.executable, str(ROOT / "on_stop.py")],
+        input=json.dumps({"cwd": str(ROOT)}),
+        env={**os.environ, "DIFF_DESK_WAIT": "0"},
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    assert elsewhere.returncode == 0
+    assert not elsewhere.stderr.strip()
+
+
+def test_a_desk_leaves_its_address_while_it_serves(desk):
+    # How the hook finds the review a session is reading, without being told a port or a home.
+    serving = [held for held in gen_diff_data.running() if held["port"] == int(desk.url.rsplit(":", 1)[1])]
+    assert len(serving) == 1
+    assert serving[0]["root"] == str(desk.repo.resolve())
+    assert serving[0]["home"] == str(desk.home)
+    # An address whose desk is gone is dropped rather than followed: whatever follows it would wait on a dead port.
+    stale = gen_diff_data.running_dir() / "65000.json"
+    stale.write_text(json.dumps({"port": 65000, "pid": 2**22, "home": str(desk.home), "root": str(desk.repo)}))
+    assert 65000 not in [held["port"] for held in gen_diff_data.running()]
+    assert not stale.exists()
 
 
 def test_the_desk_updates_itself_over_https_when_ssh_cannot_be_reached(tmp_path):

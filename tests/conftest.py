@@ -152,6 +152,9 @@ class Desk:
 @pytest.fixture(scope="session")
 def desk(repo, tmp_path_factory):
     home = tmp_path_factory.mktemp("home")
+    # Where the desk under test leaves its address. Set on this process, so everything a test starts inherits it: a
+    # test desk registered in the real one would be picked up by the reader's own Stop hook.
+    os.environ["DIFF_DESK_RUNNING"] = str(tmp_path_factory.mktemp("running"))
     port = free_port()
     # Said to a file rather than to a pipe: nothing here reads the desk as it talks, and a pipe nobody empties fills up
     # and stops the server mid-answer once a long enough session has been served.

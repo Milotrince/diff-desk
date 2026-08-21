@@ -1207,7 +1207,9 @@
     // Offered rather than taken: rebuilding the diff under the reader moves the ground they are on, so when the branch
     // has moved on - a commit, a fixup, work saved on disk - the page says so and waits to be asked.
     try {
-      const answer = await fetch("state", { cache: "no-store" });
+      // Saying it is the page asking, so the desk knows a reviewer is at it and anything waiting on a comment knows
+      // whether waiting is worth it.
+      const answer = await fetch("state?page=1", { cache: "no-store" });
       if (!answer.ok) return;
       const { stamp } = await answer.json();
       if (stamp && data.stamp) els.moved.disabled = stamp === data.stamp;
@@ -3930,6 +3932,9 @@
   render();
   drawTray();
   takeSeen().then(render);
+  // Straight away rather than on the first tick: a page just opened is the plainest sign there is that somebody is
+  // reading, and the desk has no other way of knowing.
+  watchBranch();
   loadNotes().then(() => {
     drawLog();
     render();

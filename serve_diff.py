@@ -4,13 +4,16 @@ Endpoints, all on 127.0.0.1 so nothing is exposed off the machine:
   GET  /                      the page
   GET  /data                  the payload the page renders
   GET  /refs?dir=&base=       branches ahead of a base, for the source picker
-  GET  /state                 what the served diffs are built from, so a page can tell the branch has moved on
+  GET  /state                 what the served diffs are built from, so a page can tell the branch has moved on, and
+                              when a page was last reading, so a hook can tell whether anybody is at the desk; `?page=1`
+                              is the page saying that it is
   POST /scan                  {dir, base, refs} - regenerate the payload and return it
   GET  /reviewed              which files have been read, so a tick outlives the browser it was made in
   POST /reviewed              {marks, drop} - tick files at the digest they were read at, or untick them
   GET  /comments?since=N      every recorded comment past the cursor, each with its seq and batch
   GET  /serving             which run of the desk is answering, so a watch armed against an older one stops
-  GET  /comments?event=N      every comment touched past that event, which is how a session hears about replies
+  GET  /comments?event=N      every comment touched past that event, whichever side touched it
+  GET  /comments?said=N       every comment the reviewer has touched past that event, which is what a watch follows
   POST /comments              {comments: [...], github: bool} - a batch as submitted, or a bare list of comments
   POST /bind                  {seq: [...], github} - mark comments as bound for the pull request, or keep them local
   POST /edit                  {seq, text, reply} - rewrite a comment, or the reply at that place in its thread,
@@ -59,6 +62,8 @@ import contextlib
 import json
 import os
 import pathlib
+import signal
+import sys
 import threading
 import time
 import types
@@ -84,6 +89,9 @@ class Serving:
     """
 
     source = None
+    # When a page last asked after the branch, which is how anything else can tell a reviewer is at the desk. A review
+    # nobody has open is a review nobody is about to comment on, and waiting on one costs whoever waits.
+    reading = 0.0
 
 
 HERE = pathlib.Path(__file__).parent
@@ -115,6 +123,9 @@ def read_notes():
         # A row written before the cursor existed is as old as its position says.
         row.setdefault("event", row["seq"])
         row.setdefault("eventBy", "you")
+        # A row stamped before the reviewer's own events were kept apart: its latest event is the reviewer's when they
+        # were the last to touch it, and unknown otherwise, which reads as nothing said.
+        row.setdefault("said", row["event"] if row["eventBy"] == "you" else 0)
         for answer in row["replies"]:
             # A reply written before it had a standing of its own: one already on the pull request stands as posted, and
             # one written here stands local, which is what it would have been given had it been written now. One brought
@@ -650,9 +661,15 @@ def touched(rows, row, by):
     A session follows this rather than the comment numbers: a reply on a comment it has already read is news just as
     much as a new comment, and numbering alone cannot say so. Its own writes are stamped too, so that what it is waiting
     for can be told from what it just did.
+
+    What the reviewer said is kept apart in `said`, because the row's latest event is not it: a comment submitted for
+    the pull request is recorded and then posted, and the posting is a write of this desk's own on the very same row.
+    Held in one field, that stamp lands on top of the reviewer's and the comment is never heard at all.
     """
     row["event"] = max((held.get("event", 0) for held in rows), default=0) + 1
     row["eventBy"] = by
+    if by == "you":
+        row["said"] = row["event"]
     # The last word said carries that stamp too, so a session woken by a thread can tell which line woke it from the
     # ones it has already read.
     said = row.get("replies") or []
@@ -769,7 +786,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/state":
             source = Serving.source
             marked = gen_diff_data.stamp(source.root, source.base, source.refs) if source else None
-            self._json({"stamp": marked})
+            # Only the page says it is reading. Anything else asking after the state is asking about the reader, and
+            # would answer its own question if it counted.
+            if query.get("page"):
+                Serving.reading = time.time()
+            self._json({"stamp": marked, "reading": Serving.reading})
         elif path == "/lines":
             self._lines(query)
         elif path == "/favicon.ico":
@@ -777,15 +798,26 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/reviewed":
             self._json({"marks": read_ticks()})
         elif path == "/comments":
-            since = int(query.get("since", ["0"])[0])
-            event = int(query.get("event", ["0"])[0])
-            rows = read_notes()
-            if event:
-                self._json([row for row in rows if row.get("event", 0) > event])
-            else:
-                self._json([row for row in rows if row.get("seq", 0) > since])
+            self._notes(query)
         else:
             self._send(404)
+
+    def _notes(self, query):
+        """The comments past a cursor, whichever cursor the caller keeps.
+
+        `said` is the one a watch follows - the reviewer's own latest event on the thread - since the row's latest event
+        is as often this desk's, and answering that would report a session's own work back to it.
+        """
+        said = int(query.get("said", ["0"])[0])
+        event = int(query.get("event", ["0"])[0])
+        since = int(query.get("since", ["0"])[0])
+        rows = read_notes()
+        if said:
+            self._json([row for row in rows if row.get("said", 0) > said])
+        elif event:
+            self._json([row for row in rows if row.get("event", 0) > event])
+        else:
+            self._json([row for row in rows if row.get("seq", 0) > since])
 
     def _lines(self, query):
         """A slice of a file at a revision, which is how the page fills the gaps between hunks.
@@ -884,6 +916,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": f"nothing ahead of {base} in {root}"})
             return
         serve_payload(payload)
+        # Registered once the scan has been accepted, never before: an address naming a repository this desk is not
+        # serving points whoever follows it at the wrong review.
+        gen_diff_data.register(PORT, root, base, refs)
         files = sum(len(entry["files"]) for entry in payload["branches"])
         print(f"SCANNED {len(payload['branches'])} branch(es), {files} file diffs", flush=True)
         self._json({"ok": True, "data": payload})
@@ -1346,8 +1381,18 @@ class Handler(BaseHTTPRequestHandler):
 
 def main(source=None):
     Serving.source = source
+    if source:
+        gen_diff_data.register(PORT, source.root, source.base, source.refs)
     print(f"diff desk on http://127.0.0.1:{PORT}/  (comments -> {NOTES})", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    # Being asked to stop is how a desk running in the background usually ends, and its address should end with it.
+    # Handled in the main thread, so it unwinds out of serve_forever rather than killing the process where it stands.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    try:
+        ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    finally:
+        # A desk killed outright leaves its address behind even so; whoever reads it checks that the desk is still
+        # there, so the leftover costs a look rather than a wait on a dead port.
+        gen_diff_data.unregister(PORT)
 
 
 if __name__ == "__main__":

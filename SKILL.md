@@ -23,15 +23,34 @@ A page load collects the diffs again, so a reload always shows the branch as it 
 
 ## Picking up the comments
 
-The user writes comments on the page and presses "Submit review", which sends the whole batch at once. To wait for one, run in the background - it blocks until a batch lands, prints it, and exits:
+The user writes comments on the page and presses "Submit review", which sends the whole batch at once. Nothing has to be
+armed to hear about it: the Stop hook, `on_stop.py`, runs whenever a session would have gone idle, finds the desk
+serving the tree it is working in, and hands over whatever the reviewer has said. So a batch reaches a session by being
+submitted, and the session's job is to work through what the hook gives it.
+
+Installed in `~/.claude/settings.json`, which the README spells out:
+
+    "Stop": [{"hooks": [{"type": "command", "command": "python3 ~/.claude/skills/diff-desk/on_stop.py",
+      "asyncRewake": true, "timeout": 1800}]}]
+
+If a session is picking up comments only when the user asks it to, that hook is missing.
+
+To wait for a batch by hand - a session already at work, wanting the next word before it stops:
 
     python3 ~/.claude/skills/diff-desk/desk.py watch
 
-It reports to stdout and nowhere else, so whatever runs it has to be reading that stream: started with its output sent to a file, it watches faithfully and reports to nobody, and the review sits there unanswered with nothing to say it arrived. Either keep the stream where the session reads it, or arm `--once` and read what it printed when it exits.
+It blocks until the reviewer says something, prints it, and exits, because a background command that does not exit
+tells a session nothing. Its exit code says how it went: 0 heard something, 3 found no desk running or one restarted
+since the watch was armed, 4 waited out its `--timeout`. `--follow` keeps it printing instead, for a terminal a person
+is reading.
 
-A thread is printed whole and the line that woke the session is marked with a `*`, so what has already been answered reads as read. A watch armed against a desk that has since been restarted says so and stops, since a restart carries whatever the tool has become: arm it again rather than reading a page that no longer exists. It keeps running and prints whatever the reviewer says, as they say it - not only the first thing, and not only new comments: a reply on a comment already read reaches it just the same, since it follows the log's event cursor rather than the comment numbers. A session's own replies and resolutions bump that cursor too and are told apart, so what it is waiting for is never confused with what it just did.
+What it heard goes to stdout and how the watch itself went to stderr, so a report sent to a file is a report nobody
+reads. Either keep the stream where it will be read, or let it exit and read what it printed.
 
-`--once` stops it after the first report, and where it stopped is remembered, so the way to be woken rather than to keep looking is to arm `watch --once` in the background, answer what it reports, and arm it again: the same reply never wakes a session twice, and nothing said while it was answering is lost. `--since N` overrides where it resumes from.
+What it follows is what the reviewer has said on each thread, not the comment numbers, so a reply on a comment already
+read reaches it just the same. A thread is printed whole with the line that woke the session marked by a `*`, so what
+has already been answered reads as read. Where it stopped is remembered, so the same word never arrives twice and
+nothing said while the session was answering is lost. `--since N` overrides where it resumes from.
 
 Each comment prints as `[seq] branch path:line-endLine (side) text`, followed by its state and any replies, each numbered `[0]`, `[1]` ... by its place in the thread. Answer in the thread, and close what is done - the page shows both without a reload:
 
