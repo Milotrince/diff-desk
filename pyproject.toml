@@ -11,7 +11,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PL", "DTZ", "BLE"]
 
 [tool.ruff.lint.isort]
 split-on-trailing-comma = false
-known-first-party = ["conftest", "desk", "gen_diff_data", "serve_diff"]
+known-first-party = ["conftest", "desk", "gen_diff_data", "on_stop", "serve_diff"]
 
 [tool.ruff.format]
 skip-magic-trailing-comma = true

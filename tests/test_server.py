@@ -13,6 +13,7 @@ import urllib.request
 import pytest
 
 import gen_diff_data
+import on_stop
 from conftest import FILE_LINES, ROOT, SECOND_EDIT, free_port, until
 from serve_diff import is_refusal
 
@@ -1481,22 +1482,79 @@ def test_the_stop_hook_hands_a_comment_over_without_anything_being_armed(desk):
     # Answered, and the same comment does not stop the session a second time.
     desk.post("/resolve", {"seq": [seq], "answer": "done", "resolved": True, "who": "session"})
     assert stopping().returncode == 0
-    # A session working somewhere else is left alone, however much is waiting on this desk.
-    desk.post(
-        "/comments",
-        [{"branch": "feature", "path": "sample.py", "line": 66, "side": "new", "text": "not this session's review"}],
+
+
+def test_a_hook_is_offered_the_desks_of_its_own_session_and_no_others(desk, tmp_path):
+    # Which session started a desk is the exact answer to whose review it is, and the tree it serves is not: a worktree
+    # and the repository it hangs off, or two branches of one repository, each read as the other's.
+    # Owned by no session - process 1 has no `claude` above it - so the tree it serves is what is left to go on.
+    away = gen_diff_data.running_dir() / "65001.json"
+    near = gen_diff_data.running_dir() / "65002.json"
+    away.write_text(json.dumps({"port": 65001, "pid": 1, "home": str(tmp_path), "root": str(tmp_path / "elsewhere")}))
+    near.write_text(json.dumps({"port": 65002, "pid": 1, "home": str(tmp_path), "root": str(desk.repo)}))
+    try:
+        assert on_stop.session_of(1) == 0
+        # An unowned desk is offered on the tree it serves: this repository, or one either side of it.
+        assert on_stop.related(str(desk.repo), str(desk.repo))
+        assert on_stop.related(str(desk.repo), str(desk.repo / "pkg" / "sub"))
+        assert not on_stop.related(str(tmp_path / "elsewhere"), str(desk.repo))
+        # So the desk pointed somewhere else is never offered here, whoever started the rest.
+        assert 65001 not in [held["port"] for held in on_stop.ours(str(desk.repo))]
+    finally:
+        away.unlink(missing_ok=True)
+        near.unlink(missing_ok=True)
+
+
+def test_the_stop_hook_hears_the_second_of_two_desks(desk, tmp_path):
+    # A reviewer with two reviews open comments on either of them. A hook waiting on the likeliest desk alone would
+    # hear about the other one on the session's next stop, which for a session that has gone idle never comes.
+    port = free_port()
+    home = tmp_path / "second"
+    home.mkdir()
+    second = subprocess.Popen(
+        [sys.executable, str(ROOT / "desk.py"), "serve", "--dir", str(desk.repo), "--base", "main", "feature"],
+        cwd=ROOT,
+        env={**os.environ, "DIFF_DESK_HOME": str(home), "DIFF_DESK_PORT": str(port)},
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
     )
-    elsewhere = subprocess.run(
-        [sys.executable, str(ROOT / "on_stop.py")],
-        input=json.dumps({"cwd": str(ROOT)}),
-        env={**os.environ, "DIFF_DESK_WAIT": "0"},
-        capture_output=True,
-        text=True,
-        timeout=90,
-        check=False,
-    )
-    assert elsewhere.returncode == 0
-    assert not elsewhere.stderr.strip()
+    try:
+        both = until(lambda: [held for held in gen_diff_data.running() if held["port"] == port] or None)
+        assert both
+        # Both pages open, this one first, so a hook that waits on the likeliest desk alone waits on the other one.
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/state?page=1", timeout=30).read()
+        urllib.request.urlopen(f"{desk.url}/state?page=1", timeout=30).read()
+        waiting = subprocess.Popen(
+            [sys.executable, str(ROOT / "on_stop.py")],
+            stdin=subprocess.PIPE,
+            env={**os.environ, "DIFF_DESK_WAIT": "25"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        waiting.stdin.write(json.dumps({"cwd": str(desk.repo)}))
+        waiting.stdin.close()
+        # Said on the second desk while the hook waited, which is the case a single watch never hears.
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"http://127.0.0.1:{port}/comments",
+                data=json.dumps(
+                    [{"branch": "feature", "path": "sample.py", "line": 67, "side": "new", "text": "on the other desk"}]
+                ).encode(),
+                headers={"Content-Type": "application/json"},
+            ),
+            timeout=30,
+        ).read()
+        # Read rather than communicated, since stdin was handed over before the comment was written.
+        told = waiting.stderr.read()
+        waiting.wait(timeout=90)
+        assert waiting.returncode == 2
+        assert "on the other desk" in told
+        # Answered on the desk it was left on, which is the one the hook named.
+        assert f"DIFF_DESK_PORT={port}" in told
+    finally:
+        second.terminate()
+        second.wait(timeout=10)
 
 
 def test_a_desk_leaves_its_address_while_it_serves(desk):

@@ -35,6 +35,12 @@ Installed in `~/.claude/settings.json`, which the README spells out:
 
 If a session is picking up comments only when the user asks it to, that hook is missing.
 
+Several desks at once are the normal case - a review per branch, or per worktree - and each is a review of its own: its
+own port, its own home, its own comments and its own place in them. The hook waits on all of the session's desks at the
+same time and hands over whichever speaks first, so which one the reviewer comments on does not matter. A desk belongs
+to the session that started it, so two sessions reviewing different branches of one repository are never handed each
+other's comments; one started by hand belongs to whoever is working in the tree it serves.
+
 To wait for a batch by hand - a session already at work, wanting the next word before it stops:
 
     python3 ~/.claude/skills/diff-desk/desk.py watch
