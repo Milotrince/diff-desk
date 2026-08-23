@@ -2315,16 +2315,20 @@ def test_a_thread_says_what_it_owes_the_pull_request_and_sends_it_when_asked(pag
 
         # A note is written into the thread and stays there: it is read as a note rather than as somebody's answer,
         # it carries no standing, and what the thread owes the pull request is what it was without it.
-        page.locator(f"#note-{made} .actions textarea").fill("come back to this after the rebase")
-        page.locator(f"#note-{made} .actions button").filter(has_text="Note").first.click()
+        page.locator(f"#note-{made} .filehead, #note-{made} .line").first.hover()
+        page.locator(f"#note-{made} .line:not(.reply) button.tiny").filter(has_text="Note").click()
+        page.locator(f"#note-{made} .line.actions.aside textarea").fill("come back to this after the rebase")
+        page.locator(f"#note-{made} .line.actions.aside button").filter(has_text="Keep").click()
         page.wait_for_selector(f"#note-{made} .line.reply.aside:not(.actions)")
         aside = page.locator(f"#note-{made} .line.reply.aside:not(.actions)")
         assert aside.locator(".mark.aside").inner_text() == "note"
         assert aside.locator(".who").inner_text() == "you"
 
-        # A note is answered where it stands, and the answer is a note too: it steps in under what it answers, and
-        # neither of them carries a standing, having nowhere to go.
-        aside.locator("button.tiny").filter(has_text="Reply").click()
+        # One for every comment: the note about the remark carries the remark's, and the reply carries its own while
+        # nothing stands on it.
+        assert page.locator(f"#note-{made} button.tiny").filter(has_text="note").count() == 2
+        assert aside.locator("button.tiny").filter(has_text="note").count() == 1
+        aside.locator("button.tiny").filter(has_text="Note").click()
         page.locator(f"#note-{made} .line.actions.aside textarea").fill("done.")
         page.locator(f"#note-{made} .line.actions.aside button").filter(has_text="Keep").click()
         page.wait_for_function(
@@ -2381,7 +2385,7 @@ def test_a_thread_says_what_it_owes_the_pull_request_and_sends_it_when_asked(pag
             }""",
             arg=made,
         )
-        assert page.locator(f"#note-{made} .line.reply .mark").first.inner_text() == "on the PR"
+        assert page.locator(f"#note-{made} .line.reply:not(.aside) .mark").first.inner_text() == "on the PR"
         row = {row["seq"]: row for row in desk.get("/comments")}[made]
         assert (row["github"], row["replies"][0]["github"]) == ("posted", "posted")
         assert (row["replies"][1]["note"], row["replies"][1]["github"]) == (True, "none")

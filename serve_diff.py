@@ -823,6 +823,7 @@ class Handler(BaseHTTPRequestHandler):
             "/reply": self._reply,
             "/resolve": self._resolve,
             "/drop": self._drop,
+            "/forget": self._forget,
             "/publish": self._publish,
             "/send": self._send_thread,
             "/sync": self._sync,
@@ -1005,7 +1006,19 @@ class Handler(BaseHTTPRequestHandler):
                 if on is not None and not 0 <= on < len(said_before):
                     self._json({"ok": False, "error": f"comment {found['seq']} has nothing said at [{on}]"})
                     return
-                is_note = bool(order.get("note")) or (on is not None and bool(said_before[on].get("note")))
+                is_note = bool(order.get("note"))
+                if on is not None and said_before[on].get("note"):
+                    # A reply is never turned into a note, nor a note into a reply: what is bound for the pull request
+                    # cannot hang on something the pull request has never seen.
+                    if not is_note:
+                        self._json({"ok": False, "error": f"[{on}] is a note, which the pull request holds none of"})
+                        return
+                    # One more note on a note carries on where that note stands, so notes never stand inside notes.
+                    while on is not None and said_before[on].get("note"):
+                        on = said_before[on].get("on")
+                    said.pop("on", None)
+                    if on is not None:
+                        said["on"] = on
                 if is_note:
                     said["note"] = True
                 said_before.append(said)
@@ -1036,6 +1049,39 @@ class Handler(BaseHTTPRequestHandler):
                     closed += 1
         print(f"{'RESOLVED' if closing else 'REOPENED'} {closed} comment(s) by {who}", flush=True)
         self._json({"ok": True, "resolved": closed, "state": "resolved" if closing else "open"})
+
+    def _forget(self):
+        """Forget the last note of a thread, named by its place in it.
+
+        A note never left this desk, so nothing has to be asked of the pull request - which is what tells it apart
+        from a reply, where a posted one has to be deleted there as well. What they share is that only the last of
+        them can go: letting go of one further up leaves what stands under it standing against nothing.
+        """
+        order = self._body()
+        seq, at = order.get("seq"), order.get("note")
+        with changing() as rows:
+            found = next((row for row in rows if row["seq"] == seq), None)
+            said = (found or {}).get("replies") or []
+            if found is None or at != len(said) - 1 or not said[at].get("note"):
+                found = None
+            else:
+                said.pop(at)
+                # What is said is addressed by its place in the thread, so the places move when one goes: an anchor
+                # past it comes back one, and one that named it stands on the thread instead.
+                for answer in said:
+                    on = answer.get("on")
+                    if on is None:
+                        continue
+                    if on == at:
+                        answer.pop("on")
+                    elif on > at:
+                        answer["on"] = on - 1
+                touched(rows, found, "you")
+        if found is None:
+            self._json({"ok": False, "error": f"[{at}] is not the last note of comment {seq}"})
+            return
+        print(f"FORGOT note [{at}] of [{seq}]", flush=True)
+        self._json({"ok": True, "seq": seq, "note": at})
 
     def _drop(self):
         """Delete a comment, or only its last reply, here and on the pull request when it was posted.

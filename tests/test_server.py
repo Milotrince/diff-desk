@@ -1598,15 +1598,31 @@ def test_a_note_stays_on_the_desk_whatever_the_thread_sends(desk):
     assert "answered on the pull request" in calls[-1]
     assert not any("come back to this" in call or "widen the test" in call for call in calls)
 
-    # A note is answered where it stands, and what answers a note is a note too: the pull request holds no such thing
-    # to answer, whichever side writes it.
-    assert desk.post("/reply", {"seq": seq, "text": "done.", "who": "session", "on": 0})["ok"]
+    # A note stands on the remark or on a reply, and one more note on a note carries that sub-thread on rather than
+    # standing inside it. A reply is never turned into a note: it cannot hang on what the pull request has never seen.
+    # An anchor naming a note is read through it, so a thread written before that rule reads as it did.
+    assert desk.post("/reply", {"seq": seq, "text": "done.", "who": "session", "note": True, "on": 1})["ok"]
+    assert desk.post("/reply", {"seq": seq, "text": "and again", "who": "you", "note": True, "on": 0})["ok"]
+    assert not desk.post("/reply", {"seq": seq, "text": "out loud", "who": "session", "on": 0})["ok"]
     assert not desk.post("/reply", {"seq": seq, "text": "nowhere", "who": "you", "on": 9})["ok"]
+
+    # A note never left, so it is forgotten without asking the pull request anything - but only the last of them, as
+    # for a reply: letting go of one further up leaves what stands under it standing against nothing.
+    assert not desk.post("/forget", {"seq": seq, "note": 0})["ok"]
+    assert desk.post("/forget", {"seq": seq, "note": 4})["ok"]
+    assert [reply["text"] for reply in {row["seq"]: row for row in desk.get("/comments")}[seq]["replies"]] == [
+        "come back to this after the rebase",
+        "answered on the pull request",
+        "and the session is to widen the test",
+        "done.",
+    ]
 
     # Written for this side of the desk, so a note carries no standing and a thread holding one owes nothing more.
     row = {row["seq"]: row for row in desk.get("/comments")}[seq]
-    answered = row["replies"][3]
-    assert (answered["who"], answered["note"], answered["on"]) == ("session", True, 0)
+    # What each note is about: the reply it was written on, and the ones with no anchor at all, which stand on the
+    # remark.
+    assert (row["replies"][3]["who"], row["replies"][3]["note"], row["replies"][3]["on"]) == ("session", True, 1)
+    assert (row["replies"][0]["who"], row["replies"][0]["note"], "on" in row["replies"][0]) == ("you", True, False)
     assert [(reply.get("note", False), reply["github"]) for reply in row["replies"]] == [
         (True, "none"),
         (False, "posted"),
