@@ -6,6 +6,7 @@ desk.py comments [--all]                             what has been submitted, un
 desk.py reply 3 "why it happens ..."                 answer a comment without closing it
 desk.py reply 3 --note "look at this again"          leave a note, which never reaches the pull request
 desk.py reply 3 --note --on 0 "done."                answer what was said at [0], here and nowhere else
+desk.py forget 3                                     let go of the last note on a comment
 desk.py edit 3 "what I actually meant ..."           rewrite a comment, keeping what it said before
 desk.py edit 3 --reply 0 "worded better ..."         rewrite one reply of a comment, by its place in the thread
 desk.py bind 3 4 [--local]                           aim comments at the pull request, or keep them local
@@ -107,7 +108,7 @@ def span(note):
     return f"{note['line']}-{end}" if end and end != note["line"] else str(note["line"])
 
 
-def show(note):
+def show(note, since=None):
     text = " ".join(str(note.get("text", "")).split())
     marks = [note.get("state", "open")]
     if note.get("github", "none") != "none":
@@ -127,7 +128,10 @@ def show(note):
         kind = "note " if answer.get("note") else ""
         on = f" on [{answer['on']}]" if answer.get("on") is not None else ""
         said = f"{kind}{answer['who']}{on}"
-        print(f"      [{index}] {said} {answer['at']}: {' '.join(answer['text'].split())}", flush=True)
+        # What woke the session, marked: a thread is printed whole, so without this the line that is news reads like
+        # the ones it has already answered.
+        news = "*" if since is not None and answer.get("event", 0) > since else " "
+        print(f"     {news}[{index}] {said} {answer['at']}: {' '.join(answer['text'].split())}", flush=True)
         for earlier in answer.get("edits") or []:
             print(f"          was {earlier['at']}: {' '.join(earlier['text'].split())[:80]}", flush=True)
     for earlier in note.get("edits") or []:
@@ -140,9 +144,22 @@ def heard_upto():
     return json.loads(kept.read_text())["event"] if kept.exists() else None
 
 
-def stop_at(event):
+def stop_at(event, desk=None):
     kept = gen_diff_data.home() / "watched.json"
-    kept.write_text(json.dumps({"event": event}))
+    held = json.loads(kept.read_text()) if kept.exists() else {}
+    kept.write_text(json.dumps({"event": event, "desk": desk if desk is not None else held.get("desk")}))
+
+
+def serving():
+    """Which run of the desk is answering, or None where it does not say - an older desk than this one."""
+    answer = ask("/serving")
+    return (answer or {}).get("desk")
+
+
+def armed_against():
+    """The run of the desk the last watch was armed against."""
+    kept = gen_diff_data.home() / "watched.json"
+    return json.loads(kept.read_text()).get("desk") if kept.exists() else None
 
 
 def serve(args):
@@ -192,8 +209,14 @@ def watch(args):
         since = min(waiting) - 1
     else:
         since = max((row.get("event", row["seq"]) for row in sent), default=0)
+    # A watch outlives the desk it was armed against: a restarted desk carries whatever the tool has become, wording
+    # and all, so one armed against the run before it is reading something that no longer exists.
+    running = serving()
+    if running is not None and armed_against() not in (None, running):
+        print("the desk has been restarted since this watch was armed; arm it again", flush=True)
+        return
     print(f"watching for anything said past event {since}", flush=True)
-    stop_at(since)
+    stop_at(since, running)
     deadline = time.monotonic() + args.timeout if args.timeout else None
     # Never returns of its own accord: a reviewer says one thing, then another, and a watch that stopped at the first
     # left every word after it unheard - which is what happened before it kept going.
@@ -203,11 +226,14 @@ def watch(args):
         if fresh:
             print(f"{len(fresh)} comment(s) with news:", flush=True)
             for note in fresh:
-                show(note)
+                show(note, since)
             since = max(row.get("event", row["seq"]) for row in fresh)
-            stop_at(since)
+            stop_at(since, running)
             if args.once:
                 return
+        if serving() not in (None, running):
+            print("the desk has been restarted; arm the watch again", flush=True)
+            return
         time.sleep(args.every)
     print("nothing said within the timeout")
 
@@ -266,6 +292,21 @@ def reply(args):
         sys.exit(outcome.get("error", "the reply was refused"))
     said = "left a note on" if args.note else "replied to"
     print(f"{said} [{outcome['seq']}], now {outcome['replies']} reply(ies) on it")
+
+
+def forget(args):
+    """Let go of the last note on a comment, which is the only one that can go: what stands under it would be left
+    standing against nothing."""
+    held = ask("/comments")
+    if held is None:
+        sys.exit("nothing is serving")
+    said = next((row.get("replies") or [] for row in held if row["seq"] == args.seq), None)
+    if said is None:
+        sys.exit(f"no comment numbered {args.seq}")
+    outcome = ask("/forget", {"seq": args.seq, "note": len(said) - 1})
+    if not (outcome or {}).get("ok"):
+        sys.exit((outcome or {}).get("error", "the note is still there"))
+    print(f"forgot the last note on [{args.seq}], {len(said) - 1} thing(s) still said in it")
 
 
 def resolve(args):
@@ -343,6 +384,10 @@ job.add_argument("text", nargs="+", help="the reply, shown under the comment on 
 job.add_argument("--note", action="store_true", help="leave it as a note, which stays on this desk whatever is sent")
 job.add_argument("--on", type=int, help="answer what was said at this place in the thread rather than the remark")
 job.set_defaults(run=reply)
+
+job = jobs.add_parser("forget", help="let go of the last note on a comment")
+job.add_argument("seq", type=int)
+job.set_defaults(run=forget)
 
 job = jobs.add_parser("resolve", help="answer and close comments, or reopen them")
 job.add_argument("seq", nargs="+", type=int)

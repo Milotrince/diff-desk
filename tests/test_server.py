@@ -1358,6 +1358,8 @@ def test_watching_hears_everything_said_not_only_the_first(desk):
     assert "and the second word" in said
     # Its own writes are not news to it, so a session's reply never wakes it.
     assert said.count("comment(s) with news") == 2
+    # A thread is printed whole, so the line that woke it is marked: what has already been answered reads as read.
+    assert "*[0] you" in said
 
     # Watching again carries on from where that one stopped: what has been heard once does not wake anything twice, and
     # a watch that stops at the first word can therefore be armed again after answering it.
@@ -1367,6 +1369,15 @@ def test_watching_hears_everything_said_not_only_the_first(desk):
     heard = desk.cli("watch", "--once", "--every", "0.2", "--timeout", "20").communicate(timeout=40)[0]
     assert "and a third word" in heard
     assert heard.count("comment(s) with news") == 1
+
+    # A watch outlives the desk it was armed against, and a restarted desk carries whatever the tool has become, so
+    # one armed against the run before it says so and stops rather than reading a page that no longer exists.
+    armed = json.loads(stopped.read_text())
+    assert armed["desk"] == desk.get("/serving")["desk"]
+    stopped.write_text(json.dumps({**armed, "desk": "some run before this one"}))
+    told = desk.cli("watch", "--once", "--every", "0.2", "--timeout", "20").communicate(timeout=40)[0]
+    assert "arm it again" in told
+    stopped.write_text(json.dumps(armed))
 
 
 def test_the_desk_updates_itself_over_https_when_ssh_cannot_be_reached(tmp_path):
@@ -1607,9 +1618,11 @@ def test_a_note_stays_on_the_desk_whatever_the_thread_sends(desk):
     assert not desk.post("/reply", {"seq": seq, "text": "nowhere", "who": "you", "on": 9})["ok"]
 
     # A note never left, so it is forgotten without asking the pull request anything - but only the last of them, as
-    # for a reply: letting go of one further up leaves what stands under it standing against nothing.
+    # for a reply: letting go of one further up leaves what stands under it standing against nothing. A session says
+    # which comment and the desk works out which note that is, since the last is the only one it could mean.
     assert not desk.post("/forget", {"seq": seq, "note": 0})["ok"]
-    assert desk.post("/forget", {"seq": seq, "note": 4})["ok"]
+    told = desk.cli("forget", str(seq)).communicate(timeout=30)[0]
+    assert "forgot the last note" in told
     assert [reply["text"] for reply in {row["seq"]: row for row in desk.get("/comments")}[seq]["replies"]] == [
         "come back to this after the rebase",
         "answered on the pull request",
