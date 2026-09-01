@@ -58,42 +58,25 @@ def related(root, cwd):
     return root == cwd or root in cwd.parents or cwd in root.parents
 
 
-def session_of(pid):
-    """The Claude Code session that process belongs to, as the pid of the `claude` it hangs off, or 0 for none.
-
-    A desk is started by a session and is a child of it, as this hook is, so this is the one exact answer to which
-    review belongs to whom - and the tree being served is not: two sessions reviewing different branches of one
-    repository, or a worktree and the repository it hangs off, each read as serving the other's desk.
-    """
-    for _ in range(24):
-        if not pid or pid == 1:
-            return 0
-        said = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True, check=False)
-        parent, _, name = said.stdout.strip().partition(" ")
-        if not parent.isdigit():
-            return 0
-        # Named by its whole path on some systems and truncated by others, so it is the file name that is compared.
-        if pathlib.Path(name.strip()).name == "claude":
-            return pid
-        pid = int(parent)
-    return 0
+def loose(desk):
+    """Whether no session is holding that desk: it names none, or the session that started it has since exited."""
+    return not desk.get("owner") or not gen_diff_data.alive(desk.get("ownerPid"))
 
 
-def ours(cwd):
+def ours(cwd, me):
     """The desks this session should be told about: the ones it started, or failing that the ones serving its tree.
 
-    A desk another session started is that session's to answer, so it is never taken on the tree it serves. One that no
-    session started - run by hand in a terminal, or on a system where the ancestry cannot be read - belongs to whoever
-    is working where it points.
+    Which session started a desk is the one exact answer to whose review it is, and the tree being served is not: two
+    sessions reviewing different branches of one repository, or a worktree and the repository it hangs off, each read
+    as serving the other's desk. So a desk another session is holding is that session's to answer and is never taken
+    here. One that nobody is holding - run by hand in a terminal, or left behind by a session that has exited -
+    belongs to whoever is working where it points.
     """
     desks = gen_diff_data.running()
-    me = session_of(os.getpid())
-    if me:
-        started = [desk for desk in desks if session_of(desk.get("pid")) == me]
-        if started:
-            return started
-        desks = [desk for desk in desks if not session_of(desk.get("pid"))]
-    return [desk for desk in desks if related(desk.get("root", ""), cwd)]
+    started = [desk for desk in desks if me and desk.get("owner") == me]
+    if started:
+        return started
+    return [desk for desk in desks if loose(desk) and related(desk.get("root", ""), cwd)]
 
 
 def watching(desk):
@@ -136,7 +119,7 @@ def hear(desks):
                 if watch.returncode == HEARD:
                     return desk, said
                 if watch.returncode == GONE:
-                    gen_diff_data.unregister(desk["port"])
+                    gen_diff_data.unregister(desk["port"], desk["pid"])
                 elif watch.returncode != NOTHING:
                     # A watch that fell over is not a reviewer with nothing to say, and a hook that fails quietly is
                     # the silence this one exists to end. Said out loud, without touching the stop.
@@ -194,7 +177,10 @@ def main():
         asked = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         asked = {}
-    mine = ours(asked.get("cwd") or os.getcwd())
+    # The environment first, since that is the same thing the desk recorded; what the hook is handed covers a harness
+    # that does not export it.
+    me = gen_diff_data.owner() or asked.get("session_id") or ""
+    mine = ours(asked.get("cwd") or os.getcwd(), me)
     if not mine:
         return
     wait = float(os.environ.get("DIFF_DESK_WAIT", "1500"))

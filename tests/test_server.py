@@ -1485,24 +1485,69 @@ def test_the_stop_hook_hands_a_comment_over_without_anything_being_armed(desk):
 
 
 def test_a_hook_is_offered_the_desks_of_its_own_session_and_no_others(desk, tmp_path):
-    # Which session started a desk is the exact answer to whose review it is, and the tree it serves is not: a worktree
-    # and the repository it hangs off, or two branches of one repository, each read as the other's.
-    # Owned by no session - process 1 has no `claude` above it - so the tree it serves is what is left to go on.
-    away = gen_diff_data.running_dir() / "65001.json"
-    near = gen_diff_data.running_dir() / "65002.json"
-    away.write_text(json.dumps({"port": 65001, "pid": 1, "home": str(tmp_path), "root": str(tmp_path / "elsewhere")}))
-    near.write_text(json.dumps({"port": 65002, "pid": 1, "home": str(tmp_path), "root": str(desk.repo)}))
+    # Which session started a desk is the exact answer to whose review it is, and the tree it serves is not: two
+    # sessions reviewing different branches of one repository, or a worktree and the repository it hangs off, each
+    # read as serving the other's desk.
+    ended = subprocess.Popen([sys.executable, "-c", ""])
+    ended.wait()
+    cards = {
+        # This session's own, on a tree it is not sitting in.
+        65001: {"owner": "mine", "ownerPid": os.getpid(), "root": str(tmp_path / "elsewhere")},
+        # Another session's, on the very tree this one is working in, and that session is still there to answer it.
+        65002: {"owner": "theirs", "ownerPid": os.getpid(), "root": str(desk.repo)},
+        # Left behind by a session that has since exited.
+        65003: {"owner": "gone", "ownerPid": ended.pid, "root": str(desk.repo)},
+        # Started by hand in a terminal, outside any session, and pointed somewhere else.
+        65004: {"owner": "", "ownerPid": 0, "root": str(tmp_path / "elsewhere")},
+    }
+    for port, card in cards.items():
+        where = gen_diff_data.running_dir() / f"{port}.json"
+        where.write_text(json.dumps({"port": port, "pid": os.getpid(), "home": str(tmp_path), **card}))
+
+    def offered(cwd, me):
+        return sorted(held["port"] for held in on_stop.ours(cwd, me) if held["port"] in cards)
+
     try:
-        assert on_stop.session_of(1) == 0
-        # An unowned desk is offered on the tree it serves: this repository, or one either side of it.
+        # A session hears from every desk it started and from nothing else, wherever those desks point.
+        assert offered(str(desk.repo), "mine") == [65001]
+        # One that started none of them is offered what no session is holding, on the tree it is working in - never
+        # the desk another live session has open on that same tree.
+        assert offered(str(desk.repo), "third") == [65003]
+        assert offered(str(tmp_path / "elsewhere"), "third") == [65004]
+        # A desk nobody is holding is offered on the tree it serves: that repository, or one either side of it.
         assert on_stop.related(str(desk.repo), str(desk.repo))
         assert on_stop.related(str(desk.repo), str(desk.repo / "pkg" / "sub"))
         assert not on_stop.related(str(tmp_path / "elsewhere"), str(desk.repo))
-        # So the desk pointed somewhere else is never offered here, whoever started the rest.
-        assert 65001 not in [held["port"] for held in on_stop.ours(str(desk.repo))]
     finally:
-        away.unlink(missing_ok=True)
-        near.unlink(missing_ok=True)
+        for port in cards:
+            (gen_diff_data.running_dir() / f"{port}.json").unlink(missing_ok=True)
+
+
+def test_a_serve_on_a_taken_port_leaves_the_address_of_the_desk_holding_it(desk, tmp_path):
+    # The address is the whole of how a review is found, and a serve that gave up on a port it could not have used to
+    # write its own over the incumbent's and then take that one down on the way out, leaving a desk in plain sight
+    # that no hook could see.
+    port = int(desk.url.rsplit(":", 1)[1])
+    card = gen_diff_data.running_dir() / f"{port}.json"
+    held = card.read_text()
+    turned = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import serve_diff; serve_diff.main(serve_diff.Source(*__import__('sys').argv[1:3], ['feature']))",
+            str(desk.repo),
+            "main",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "DIFF_DESK_HOME": str(tmp_path), "DIFF_DESK_PORT": str(port)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert turned.returncode != 0
+    assert "already serving a desk" in turned.stderr
+    assert card.read_text() == held
 
 
 def test_the_stop_hook_hears_the_second_of_two_desks(desk, tmp_path):

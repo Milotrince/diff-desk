@@ -76,7 +76,7 @@ What carries a batch to a session is the Stop hook, so there is nothing to arm:
 
 It runs when the session would have gone idle, finds the desks that session has open, and hands over anything the reviewer has said. Installed with `asyncRewake` it then waits in the background while the page is open, so a comment written twenty minutes later wakes the session too. `DIFF_DESK_WAIT` sets how long it waits (1500 seconds by default, 0 to hand over only what has already landed), and `DIFF_DESK_LOOK` how long since the page last asked still counts as being read.
 
-Every desk a session has open is waited on at once, and whichever speaks first is what the session is handed, so a reviewer with a desk per branch is heard from wherever they comment. A desk belongs to the session that started it, read from the process it hangs off, so two sessions reviewing one repository are never handed each other's comments; one started by hand belongs to whoever is working in the tree it serves.
+Every desk a session has open is waited on at once, and whichever speaks first is what the session is handed, so a reviewer with a desk per branch is heard from wherever they comment. A desk belongs to the session that started it, named in the address it leaves, so two sessions reviewing one repository are never handed each other's comments; one started by hand, or left behind by a session that has exited, belongs to whoever is working in the tree it serves.
 
 The same commands by hand, the watch being what the hook runs:
 

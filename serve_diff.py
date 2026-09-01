@@ -1381,6 +1381,12 @@ class Handler(BaseHTTPRequestHandler):
 
 def main(source=None):
     Serving.source = source
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    except OSError as taken:
+        sys.exit(f"port {PORT} is already serving a desk, so this one has nowhere to sit: {taken}")
+    # Registered once the port is held, never before: a serve that finds it taken and gives up would otherwise write
+    # its address over the incumbent's and take that one down on the way out.
     if source:
         gen_diff_data.register(PORT, source.root, source.base, source.refs)
     print(f"diff desk on http://127.0.0.1:{PORT}/  (comments -> {NOTES})", flush=True)
@@ -1388,7 +1394,7 @@ def main(source=None):
     # Handled in the main thread, so it unwinds out of serve_forever rather than killing the process where it stands.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
-        ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+        server.serve_forever()
     finally:
         # A desk killed outright leaves its address behind even so; whoever reads it checks that the desk is still
         # there, so the leftover costs a look rather than a wait on a dead port.

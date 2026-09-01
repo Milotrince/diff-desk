@@ -30,6 +30,15 @@ def running_dir():
     return where
 
 
+def owner():
+    """The Claude Code session this process belongs to, or "" outside one.
+
+    Read from the environment rather than from the process tree: a desk started in the background is reparented the
+    moment the shell that started it exits, and what the tree says after that is that nobody started it.
+    """
+    return os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+
+
 def register(port, root, base, refs):
     """Leave this desk's address, replacing whatever a desk on the same port left behind."""
     card = running_dir() / f"{port}.json"
@@ -43,14 +52,28 @@ def register(port, root, base, refs):
                 "root": str(pathlib.Path(root).resolve()),
                 "base": base,
                 "refs": list(refs or []),
+                # Whose review this is. The pid is what says whether that session is still there, since a desk outlives
+                # the session that started it and an address nobody will ever answer is worse than no address at all.
+                "owner": owner(),
+                "ownerPid": int(os.environ.get("CLAUDE_PID") or 0),
             }
         )
     )
     os.replace(spare, card)
 
 
-def unregister(port):
-    (running_dir() / f"{port}.json").unlink(missing_ok=True)
+def unregister(port, pid=None):
+    """Take that desk's address down, leaving alone one another desk has since left on the same port.
+
+    A serve that finds the port taken unwinds through here, and the address on that port is the incumbent's.
+    """
+    card = running_dir() / f"{port}.json"
+    try:
+        left = json.loads(card.read_text())
+    except (OSError, ValueError):
+        return
+    if left.get("pid") == (os.getpid() if pid is None else pid):
+        card.unlink(missing_ok=True)
 
 
 def alive(pid):
