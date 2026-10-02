@@ -405,7 +405,7 @@
   .bar .a { background: var(--add-gutter); }
   .bar .d { background: var(--del-gutter); }
 
-  main { padding: 16px 20px 60vh; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  main { padding: 16px 2px 60vh; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
   .commitnote {
     display: flex;
@@ -555,10 +555,14 @@
   body.hide-context tr.c { display: none; }
   /* The semantic view lays two texts side by side, so its lines wrap rather than scroll: two columns of long lines
      would otherwise push each other out of the card. */
-  table.aligned { table-layout: fixed; }
-  table.aligned col.ln { width: 4.6em; }
+  /* Every row is a whole number of lines tall, so the stripes of a pad, tiled one line apart, run on from row to row
+     instead of starting over at each one. A normal line height would let a badge or a marked token stretch a row. */
+  table.aligned { table-layout: fixed; line-height: 1.25; }
+  /* Five digits and no more, since every pixel a line number takes is one the code beside it lacks. */
+  table.aligned col.ln { width: calc(5ch + 7px); }
   table.aligned col.gut { width: 21px; }
-  table.aligned td.ln { width: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.aligned td.ln { width: auto; padding: 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.aligned tr.sfold td.ln { padding: 2px 3px; font-family: var(--mono); font-size: inherit; }
   table.aligned td.ln.ghost { font-style: italic; }
   table.aligned td.code { white-space: pre-wrap; overflow-wrap: anywhere; }
   table.aligned td.code.k-del { background: var(--del-bg); }
@@ -567,7 +571,11 @@
   table.aligned td.code.k-moved { background: var(--accent-soft); }
   table.aligned td.code.k-moved.k-edit { background: linear-gradient(90deg, var(--accent-soft), var(--stale-bg)); }
   table.aligned td.code.ghost { background: var(--surface-sunk); opacity: 0.62; }
-  table.aligned td.code.pad { background: repeating-linear-gradient(135deg, var(--surface-sunk) 0 4px, var(--surface) 4px 8px); }
+  table.aligned td.code.pad {
+    background: linear-gradient(135deg, var(--surface-sunk) 25%, var(--surface) 25% 50%, var(--surface-sunk) 50% 75%, var(--surface) 75%);
+    background-size: 1lh 1lh;
+  }
+  table.aligned .sbadge { line-height: 1.2; }
   table.aligned .tok { background: color-mix(in srgb, var(--stale) 32%, transparent); border-radius: 2px; }
   tr.sfold td { background: var(--surface-sunk); color: var(--muted); padding: 2px 8px; cursor: pointer; font-family: var(--sans); font-size: 11.5px; white-space: normal; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
   tr.sfold.away td { background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface-sunk)); }
@@ -3160,10 +3168,22 @@
     if (!selection || selection.isCollapsed || !event.clipboardData) return;
     const holder = document.createElement("div");
     holder.append(selection.getRangeAt(0).cloneContents());
-    const cells = [...holder.querySelectorAll("td.code")];
+    let cells = [...holder.querySelectorAll("td.code")];
     // One row is the common case - a single line lifted out - and it carries the numbers just as a span of rows does.
     // Only a selection wholly inside one line's text brings no cell with it, and that one the browser already gets right.
     if (!cells.length) return;
+    // The semantic view sets both versions in every row, a line one side lacks standing as an empty pad and a moved
+    // line as a ghost where it was. Joined as they come, the pads read as blank lines between every line copied, so a
+    // copy takes the version the selection started in, and only the lines that version holds there.
+    if (cells.some((cell) => cell.dataset.side)) {
+      const anchor = selection.anchorNode;
+      const start = (anchor.nodeType === Node.ELEMENT_NODE ? anchor : anchor.parentElement).closest("td.code");
+      const side = start && start.dataset.side ? start.dataset.side : "new";
+      cells = cells.filter((cell) => cell.dataset.side === side && !cell.matches(".pad, .ghost"));
+      if (!cells.length) return;
+    }
+    // The badges a statement carries sit inside its cell, and their labels are no part of its code.
+    for (const badge of holder.querySelectorAll(".sbadge")) badge.remove();
     const code = cells.map((cell) => cell.textContent).join("\n");
     event.clipboardData.setData("text/plain", code);
     // Only take over the copy once the replacement is known to have been accepted: preventing the default after a
@@ -3846,7 +3866,9 @@
     for (const file of visible(view().files)) {
       file.lines.forEach((row, order) => {
         if (row[0] === "h" || (bare && row[0] === "c")) return;
-        if (pattern.test(String(row[3]))) hits.push({ path: file.path, order });
+        if (!pattern.test(String(row[3]))) return;
+        const side = row[0] === "d" ? "old" : "new";
+        hits.push({ path: file.path, order, side, line: side === "old" ? row[1] : row[2] });
       });
     }
     return hits;
@@ -3854,11 +3876,13 @@
 
   // The words found, painted as a range over the code cell's text, which leaves the syntax colours under them alone.
   // Engines without the highlight registry paint the row alone.
-  function markWords(row, pattern) {
+  function markWords(row, pattern, side) {
     if (!("highlights" in CSS) || typeof Highlight === "undefined") return;
     const nodes = [];
     let text = "";
-    const walker = document.createTreeWalker(row.querySelector("td.code"), NodeFilter.SHOW_TEXT);
+    // A row of the semantic view holds both versions, and the words found are in the one the line belongs to.
+    const cell = row.querySelector(`td.code[data-side="${side}"]`) || row.querySelector("td.code");
+    const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       if (node.parentElement.closest("button")) continue;
       nodes.push({ node, start: text.length });
@@ -3899,10 +3923,15 @@
     folds.set(hit.path, { digest: card.dataset.digest, open: true, upTo: latest() });
     const held = drawn.get(card);
     if (held) fillBody(card, held.file, held.index);
-    const row = card.querySelector(`:scope > .body tr[data-seq="${hit.order}"]`);
+    // The semantic view lines its rows up by statement rather than in diff order, so a line is found there by its number.
+    const semantic = card.querySelector(":scope > .body table.aligned");
+    const row = semantic
+      ? semantic.querySelector(`tr[data-${hit.side}-no="${hit.line}"]`)
+      : card.querySelector(`:scope > .body tr[data-seq="${hit.order}"]`);
     if (!row) return;
+    if (row.hidden) openFold(row.closest("tbody"), row.dataset.fold);
     row.classList.add("hit");
-    markWords(row, pattern);
+    markWords(row, pattern, hit.side);
     row.scrollIntoView({ block: "center" });
   }
 
@@ -4391,6 +4420,7 @@
     const [kind, spans, badge] = lined[`${side}Info`][number - 1];
     const cell = document.createElement("td");
     cell.className = ghost ? "code ghost" : `code ${kind.split(" ").map((word) => `k-${word}`).join(" ")}`;
+    cell.dataset.side = side;
     const painted = paintedSide(path, side);
     if (painted) cell.innerHTML = painted[number - 1];
     else cell.textContent = lined[side][number - 1];
@@ -4399,9 +4429,10 @@
     return cell;
   }
 
-  function padCell() {
+  function padCell(side) {
     const cell = document.createElement("td");
     cell.className = "code pad";
+    cell.dataset.side = side;
     return cell;
   }
 
@@ -4493,9 +4524,9 @@
       const from = entry.from;
       const left = numberCell(oldNo ? String(oldNo) : from ? (from[0] === file.path ? String(from[1]) : `${fileName(from[0])}:${from[1]}`) : "", from && !oldNo ? "ghost" : "");
       if (from && !oldNo) left.title = `The old version, from ${from[0]}, line ${from[1]}`;
-      const leftCode = oldNo ? alignedCode(file.path, "old", oldNo, false) : from ? alignedCode(from[0], "old", from[1], true) : padCell();
+      const leftCode = oldNo ? alignedCode(file.path, "old", oldNo, false) : from ? alignedCode(from[0], "old", from[1], true) : padCell("old");
       const right = numberCell(newNo ? String(newNo) : "");
-      const rightCode = newNo ? alignedCode(file.path, "new", newNo, false) : padCell();
+      const rightCode = newNo ? alignedCode(file.path, "new", newNo, false) : padCell("new");
       const anchor = newNo && commentable.new.has(newNo) ? ["new", newNo] : oldNo && commentable.old.has(oldNo) ? ["old", oldNo] : null;
       let gut;
       if (anchor) {
