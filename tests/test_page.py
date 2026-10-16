@@ -71,6 +71,31 @@ def settle(page):
     page.evaluate("() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))")
 
 
+def at_rest(page, frames=5):
+    """Wait for the page to stop moving: where it is scrolled and where the hit stands unchanged over several frames.
+
+    A step leaves work behind it - the files it brought near are built, and the boxes in them sized to what they hold a
+    frame later - and the browser holds the reader's place through it only to the pixel. Where a step left the reader
+    is read once that is over.
+    """
+    page.wait_for_function(
+        """(frames) => new Promise((done) => {
+          let last = null;
+          let still = 0;
+          const look = () => {
+            const hit = document.querySelector('tr.hit');
+            const now = `${window.scrollY}|${hit ? hit.getBoundingClientRect().top : ''}`;
+            still = now === last ? still + 1 : 0;
+            last = now;
+            if (still >= frames) done(true);
+            else requestAnimationFrame(look);
+          };
+          requestAnimationFrame(look);
+        })""",
+        arg=frames,
+    )
+
+
 def comments_reach(page):
     """Wait for the page to have read the comments, which it draws its cards a second time for.
 
@@ -559,6 +584,56 @@ def test_a_comment_keeps_its_code_and_its_line_breaks(page, desk):
     )
     assert abs(starts[0] - starts[1]) < 0.5
     assert suggested.evaluate("(pre) => getComputedStyle(pre, '::before').content") == '"Suggested change"'
+
+
+def test_a_comment_is_laid_out_in_paragraphs_lists_and_tables(page, desk):
+    branch = page.evaluate("() => data.branches[0].ref")
+    # A reply is laid out the way the pull request lays it out: paragraphs, lists nested by indentation and hanging off
+    # their markers, a table with its columns aligned, a heading, and emphasis. A marker typed inside a word is the
+    # word's, and points typed flush under a numbered item are that item's own.
+    laid = (
+        "Every difference:\n\n### Setters\n\n1. Setter on a *rigid* entity\n- main: ~~slept~~ a full reset\n"
+        "- branch: syncs `right away`\n2. Paused step\n   carried on\n\n   a paragraph of its own\n\n"
+        "| entry | main | branch |\n|:--|:-:|--:|\n| `step` | **sleeps** | repaints |\n\n"
+        "- [x] done\n- [ ] snake_case_name and a*b*c stay as typed\n\n---\nsaid at https://example.com/x."
+    )
+    desk.post("/comments", [{"branch": branch, "path": "sample.py", "line": FIRST_EDIT, "side": "new", "text": laid}])
+    page.reload(wait_until="load")
+    page.wait_for_selector("section.file")
+    told = page.locator(".thread .said", has_text="Every difference").first
+    assert told.locator("p.heading.h3").inner_text() == "Setters"
+    numbered = told.locator("ol")
+    assert numbered.count() == 1
+    assert numbered.locator(":scope > li").count() == 2
+    points = numbered.locator(":scope > li").first.locator(":scope > ul > li")
+    assert points.count() == 2
+    assert points.first.locator("s").inner_text() == "slept"
+    assert points.nth(1).locator("code").inner_text() == "right away"
+    assert numbered.locator(":scope > li").first.locator("em").inner_text() == "rigid"
+    second = numbered.locator(":scope > li").nth(1)
+    assert second.locator(":scope > span").inner_text() == "Paused step\ncarried on"
+    assert second.locator(":scope > p").inner_text() == "a paragraph of its own"
+    # Wrapped words start under the item's first word rather than under its marker.
+    item = points.first.evaluate(
+        """(li) => { const range = document.createRange(); range.selectNodeContents(li);
+          return [range.getClientRects()[0].left, li.getBoundingClientRect().left]; }"""
+    )
+    assert item[0] >= item[1]
+    grid = told.locator("table")
+    assert grid.locator("th").all_inner_texts() == ["entry", "main", "branch"]
+    assert grid.locator("td").all_inner_texts() == ["step", "sleeps", "repaints"]
+    assert grid.locator("td strong").inner_text() == "sleeps"
+    assert [cell.evaluate("(td) => getComputedStyle(td).textAlign") for cell in grid.locator("td").all()] == [
+        "left",
+        "center",
+        "right",
+    ]
+    assert [box.get_attribute("data-checked") for box in told.locator("li.task .tick").all()] == ["true", "false"]
+    assert "snake_case_name and a*b*c stay as typed" in told.inner_text()
+    assert told.locator("hr").count() == 1
+    assert told.locator("a", has_text="https://example.com/x").get_attribute("href") == "https://example.com/x"
+    for markup in ("###", "~~", "|", "[x]", "**"):
+        assert markup not in told.inner_text()
 
 
 def test_a_local_comment_can_be_turned_towards_the_pull_request(page, desk):
@@ -1111,6 +1186,23 @@ def test_the_path_filter_lists_what_it_matches_for_picking_by_name(page):
     page.locator("#pq").press("Escape")
     page.wait_for_selector("#palette", state="hidden")
     assert page.locator("section.file").count() == len(paths)
+
+
+def test_a_file_pressed_in_the_list_is_taken_through_a_redraw_of_it(page):
+    keys_reach(page)
+    page.keyboard.press("/")
+    page.wait_for_selector("#palette:not([hidden])")
+    listed = page.locator("#picks .pick")
+    wanted = listed.nth(2).get_attribute("data-path")
+    # The diff answering a filter redraws the list behind the reader's back, and a press it lands in the middle of is
+    # still a click on the row it started on.
+    listed.nth(2).hover()
+    page.mouse.down()
+    page.evaluate("() => render()")
+    page.mouse.up()
+    page.wait_for_selector("#palette", state="hidden")
+    reached(page, wanted)
+    assert page.evaluate(NEAREST) == wanted
 
 
 def test_stepping_lands_on_the_file_left_to_review_nearest_the_reader(page):
@@ -2366,7 +2458,7 @@ def test_text_is_found_across_the_whole_diff_folded_files_included(page):
               const words = found ? [...found].map((range) => range.toString()) : null;
               const box = getComputedStyle(document.getElementById('fq'));
               const lum = (node) => {
-                const [r, g, b] = getComputedStyle(node).backgroundColor.match(/[\d.]+/g).map(Number);
+                const [r, g, b] = getComputedStyle(node).backgroundColor.match(/[\\d.]+/g).map(Number);
                 const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
                 return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
               };
@@ -2454,9 +2546,11 @@ def test_every_hit_is_marked_and_one_in_sight_keeps_the_view(page):
         }"""
     )
     assert marked in (None, 7)
+    at_rest(page)
     scrolled = page.evaluate("() => window.scrollY")
     page.locator("#fq").press("Enter")
     assert page.locator("tr.hit").evaluate("row => row.closest('section.file').dataset.path") == "wide.py"
+    at_rest(page)
     assert page.evaluate("() => window.scrollY") == scrolled
     page.locator("#fq").press("Escape")
     page.wait_for_selector("#find", state="hidden")
