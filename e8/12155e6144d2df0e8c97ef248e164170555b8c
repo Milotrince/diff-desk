@@ -1,0 +1,14 @@
+SKILL.md
+  h_6855cd90ab4e09 30,32,34,36,38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e812155e6144d2df0e8c97ef248e164170555b8c",
+  "prompts": {},
+  "humans": {
+    "h_6855cd90ab4e09": {
+      "author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}
