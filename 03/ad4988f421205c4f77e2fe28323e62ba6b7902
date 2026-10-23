@@ -1,0 +1,16 @@
+diff_desk_template.html
+  h_6855cd90ab4e09 2775-2776
+tests/test_page.py
+  h_6855cd90ab4e09 2315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "03ad4988f421205c4f77e2fe28323e62ba6b7902",
+  "prompts": {},
+  "humans": {
+    "h_6855cd90ab4e09": {
+      "author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}
