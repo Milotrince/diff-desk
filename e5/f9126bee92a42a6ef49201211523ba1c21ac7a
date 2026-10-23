@@ -1,0 +1,22 @@
+README.md
+  h_6855cd90ab4e09 79
+gen_diff_data.py
+  h_6855cd90ab4e09 33-41,55-58,65-76
+on_stop.py
+  h_6855cd90ab4e09 61-63,65-66,69-73,76-79,122,180-183
+serve_diff.py
+  h_6855cd90ab4e09 1384-1389,1397
+tests/test_server.py
+  h_6855cd90ab4e09 1488-1509,1511-1517,1522-1550
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e5f9126bee92a42a6ef49201211523ba1c21ac7a",
+  "prompts": {},
+  "humans": {
+    "h_6855cd90ab4e09": {
+      "author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}
