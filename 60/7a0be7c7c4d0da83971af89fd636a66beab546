@@ -1,0 +1,18 @@
+README.md
+  h_6855cd90ab4e09 106-107
+diff_desk_template.html
+  h_6855cd90ab4e09 949,956,962-964,1119,1121,1125-1126,1131-1132,1134,1138,1452-1453,1455-1461,1533-1534,1959-1962,1971,1982,2161,2165,2193-2197,2216,2225-2226,2234,2291,2301,2341,2346,2669-2729,2734-2737,2781-2782,3424-3429
+tests/test_page.py
+  h_6855cd90ab4e09 2230-2337
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "607a0be7c7c4d0da83971af89fd636a66beab546",
+  "prompts": {},
+  "humans": {
+    "h_6855cd90ab4e09": {
+      "author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}
