@@ -1,0 +1,24 @@
+tests/test_page.py
+  s_c4387d6e02986d::t_4af4fb47b2854f 1178-1190
+diff_desk_template.html
+  s_c4387d6e02986d::t_65eea2c27c157b 4763
+  s_c4387d6e02986d::t_6dc7807f21ea62 5841
+  s_c4387d6e02986d::t_eb064c7beabb9c 4648-4661,4667-4671
+  s_c4387d6e02986d::t_4ea99b476ee301 4662-4666
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b44649424a73b9ab6e56e35aa43cfd120a459836",
+  "prompts": {},
+  "sessions": {
+    "s_c4387d6e02986d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "452d2036-1301-43af-9c51-52ddbb0f0e48",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}
