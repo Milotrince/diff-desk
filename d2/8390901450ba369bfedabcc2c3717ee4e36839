@@ -1,0 +1,39 @@
+diff_desk_template.html
+  s_65a92c1b9c1741::t_e7609c407b7346 756-758,762-763
+  s_65a92c1b9c1741::t_bbca02be76b60b 766-767,1746
+  s_65a92c1b9c1741::t_f222cd5de2fb0b 750-755,759-761,764-765,1704-1745,1747-1772,3195,3227,3396-3397
+README.md
+  s_65a92c1b9c1741::t_e37cf45d18d792 65-66
+serve_diff.py
+  s_65a92c1b9c1741::t_c4a8545748aca9 1675-1751
+  s_65a92c1b9c1741::t_c87db80bf21eb5 325-326
+  s_65a92c1b9c1741::t_03b065cafca15f 22-23,254,262-274,315-324,327-351,354-368,518,967,974,1033,1366
+  s_65a92c1b9c1741::t_f2c6069520c31f 352-353
+tests/test_server.py
+  s_65a92c1b9c1741::t_62a7ad001e4b10 2783-2785,2822-2824
+  s_65a92c1b9c1741::t_8be7eac55201c1 2707-2727,2729-2745,2747-2782,2786-2821,2825-2857
+  s_65a92c1b9c1741::t_8fb774e7c61663 2728,2746
+SKILL.md
+  s_65a92c1b9c1741::t_c8e5f2a865c81e 58-59
+desk.py
+  s_65a92c1b9c1741::t_62a7ad001e4b10 124-126
+  s_65a92c1b9c1741::t_bbca02be76b60b 121-123,127-128,136-137,157-158
+tests/test_page.py
+  s_65a92c1b9c1741::t_160cb923d4b3ce 4191-4225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d28390901450ba369bfedabcc2c3717ee4e36839",
+  "prompts": {},
+  "sessions": {
+    "s_65a92c1b9c1741": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1bf89a1f-c4ac-46d0-9fd8-d534716bd3d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
