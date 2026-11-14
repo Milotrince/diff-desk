@@ -4188,3 +4188,28 @@ def test_the_semantic_view_faces_both_versions_and_comments_on_the_line_shown(pa
     assert page.locator("#semantic").get_attribute("aria-pressed") == "true"
     # Left behind, the comment would reopen a file other tests fold away.
     desk.post("/drop", {"seq": note["seq"]})
+
+
+def test_the_file_list_follows_the_file_scrolled_onto(page):
+    current = "() => document.querySelector('.fileitem[data-current=\"true\"] .name')?.title"
+    first, second = page.evaluate(
+        "() => [...document.querySelectorAll('section.file')].map((card) => card.dataset.path)"
+    )[:2]
+    page.locator(".fileitem .name", has_text=first.split("/")[-1]).first.click()
+    page.wait_for_function("() => reaching === null")
+    assert page.evaluate(current) == first
+
+    # Scrolled by hand until the second file's head reaches the bar, the list moves its pick there.
+    page.wait_for_function(
+        """(path) => {
+          const card = document.querySelector(`section.file[data-path="${path}"]`);
+          const covered = document.querySelector('header').getBoundingClientRect().bottom;
+          window.scrollBy(0, card.getBoundingClientRect().top - covered);
+          return document.querySelector('.fileitem[data-current="true"] .name')?.title === path;
+        }""",
+        arg=second,
+        polling=100,
+    )
+    # And back, past the first file's head.
+    page.evaluate("() => window.scrollTo(0, 0)")
+    page.wait_for_function(f"(path) => ({current})() === path", arg=first)
